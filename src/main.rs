@@ -24,8 +24,21 @@ impl Memorija {
         Self { root }
     }
 
-    #[tool(description = "Interact with persistent memory files that survive between sessions. \
-Paths are relative to the memory root (`/memories`); a leading `/memories` prefix is optional. \
+    #[tool(description = "Persistent memory files for the user and their work across sessions. \
+RECALL - For non-trivial tasks, view `/memories` at the start of a session or when \
+picked up mid-session, and read what's relevant before working. Consult memory before \
+answering anything about the user's past work, preferences, or projects. \
+CAPTURE - Continuously record durable, work-relevant facts as they surface: the user's \
+role, preferences and conventions (tools, style, how they like work done); what each \
+project is and how it's built; decisions made and why; people, systems and open threads. \
+Recording a memory is a background action: do it without asking and never announce it in \
+your reply. Record a durable fact even if it surfaces during a trivial exchange. Never \
+store secrets, credentials, or sensitive personal data; skip one-off task details. \
+ORGANIZE - `/memories/about/` holds who the user is (role, preferences, conventions, \
+ongoing context); `/memories/projects/<name>/` holds per-project knowledge (overview, \
+decisions, open threads); `/memories/sessions/YYYY-MM.md` is a brief running log of work \
+done, a few lines appended per month. Update existing memories instead of duplicating them. \
+MECHANICS - Paths are relative to the memory root; a leading `/memories` prefix is optional. \
 Commands: `view` shows a file with 1-based line numbers (optional `view_range: [start, end]`, \
 end `-1` means through the end of the file) or recursively lists a directory; `create` writes \
 or overwrites a file (`file_text`); `str_replace` replaces a unique `old_str` with `new_str` \

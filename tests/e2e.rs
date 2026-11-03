@@ -132,7 +132,7 @@ fn full_session_over_stdio() {
     assert_eq!(tools.len(), 1, "exactly one tool: {response}");
     assert_eq!(tools[0]["name"], "memory");
     let description = tools[0]["description"].as_str().unwrap();
-    assert!(description.contains("persistent memory"), "{description}");
+    assert!(description.to_lowercase().contains("persistent memory"), "{description}");
     assert_eq!(tools[0]["inputSchema"]["required"], json!(["command", "path"]));
 
     // 3. Create a memory file in a nested directory.
