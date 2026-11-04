@@ -1,13 +1,15 @@
 mod args;
+mod cli;
 mod ops;
 mod paths;
 mod root;
+mod serve;
 #[cfg(test)]
 mod testutil;
 
 use args::MemoryArgs;
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock},
     tool, tool_handler, tool_router,
@@ -62,9 +64,6 @@ impl ServerHandler for Memorija {}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root = root::resolve()?;
-    root::ensure(&root)?;
-    let service = Memorija::new(root).serve(rmcp::transport::stdio()).await?;
-    service.waiting().await?;
-    Ok(())
+    let transport = cli::parse().transport();
+    serve::run_server(transport).await
 }
