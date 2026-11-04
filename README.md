@@ -64,13 +64,16 @@ authentication**; it warns on startup when binding to a non-loopback address.
 ### CLI
 
 ```
+memorija [--version]
 memorija serve [--stdio | --http] [--host <address>] [--port <number>]
 memorija help [command]
 ```
 
+- `--version` — print the tool name, version, and build date (e.g. `memorija 0.1.0 (built 2026-11-04)`), then exit without starting the server
 - `--stdio` — serve over stdio (default; also the bare-invocation default)
 - `--http` — serve over Streamable HTTP (default port 8080, default host `127.0.0.1`)
 - `--host` / `--port` only apply to `--http`; mixing them with `--stdio` is a usage error
+- `memorija help` shows the tool's purpose, version, build date, and usage
 - Invalid invocations exit non-zero and never create the memory root
 
 ## The memory tool

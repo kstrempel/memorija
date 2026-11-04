@@ -11,10 +11,20 @@ pub const DEFAULT_HTTP_PORT: u16 = 8080;
 /// Default bind address for the HTTP transport.
 pub const DEFAULT_HTTP_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
+/// Version line reported by `--version`: the crate version plus the UTC
+/// build date captured by `build.rs` (design D2).
+pub const VERSION_LINE: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (built ", env!("BUILD_DATE"), ")");
+
+/// Version line with the tool name, shown under the `help` usage.
+pub const AFTER_HELP: &str = concat!("memorija ", env!("CARGO_PKG_VERSION"), " (built ", env!("BUILD_DATE"), ")");
+
 #[derive(Debug, Parser)]
 #[command(
     name = "memorija",
-    about = "Persistent memory files for the user and their work across sessions"
+    about = "Persistent memory files for the user and their work across sessions",
+    version = VERSION_LINE,
+    after_help = AFTER_HELP
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -110,6 +120,46 @@ mod tests {
     fn parse(args: &[&str]) -> Result<ServeArgs, clap::Error> {
         Cli::try_parse_from(std::iter::once("memorija").chain(args.iter().copied()))
             .map(|cli| cli.serve_args())
+    }
+
+    #[test]
+    fn version_flag_reports_name_version_and_build_date() {
+        let err = parse(&["--version"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
+        let text = err.to_string();
+        assert!(text.starts_with("memorija "), "starts with the tool name: {text}");
+        assert!(text.contains(env!("CARGO_PKG_VERSION")), "names the version: {text}");
+        let date = built_date(&text).expect("build date: {text}");
+        assert_eq!(date.len(), 10, "YYYY-MM-DD form");
+        let bytes = date.as_bytes();
+        assert!(
+            bytes[..4].iter().all(u8::is_ascii_digit)
+                && bytes[4] == b'-'
+                && bytes[5..7].iter().all(u8::is_ascii_digit)
+                && bytes[7] == b'-'
+                && bytes[8..10].iter().all(u8::is_ascii_digit),
+            "YYYY-MM-DD form: {date}"
+        );
+    }
+
+    /// The `YYYY-MM-DD` build date printed after `(built `, if present.
+    fn built_date(text: &str) -> Option<&str> {
+        let start = text.find("(built ")? + "(built ".len();
+        Some(&text[start..start + 10])
+    }
+
+    #[test]
+    fn help_prints_version_and_build_date() {
+        let err = parse(&["help"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        let text = err.to_string();
+        assert!(
+            text.contains("Persistent memory files"),
+            "states the tool purpose: {text}"
+        );
+        assert!(text.contains(env!("CARGO_PKG_VERSION")), "names the version: {text}");
+        assert!(built_date(&text).is_some(), "contains a build date: {text}");
+        assert!(text.contains("serve"), "lists serve: {text}");
     }
 
     #[test]
