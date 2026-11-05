@@ -1,5 +1,6 @@
 mod args;
 mod cli;
+mod inspect;
 mod ops;
 mod paths;
 mod root;
@@ -70,7 +71,21 @@ retry with corrected arguments.")]
 impl ServerHandler for Memorija {}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let transport = cli::parse().transport();
-    serve::run_server(transport).await
+async fn main() -> std::process::ExitCode {
+    match cli::parse_command() {
+        cli::Command::Serve(args) => match serve::run_server(args.transport()).await {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        },
+        command => match inspect::run(&command) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::ExitCode::FAILURE
+            }
+        },
+    }
 }

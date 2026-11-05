@@ -69,6 +69,10 @@ authentication**; it warns on startup when binding to a non-loopback address.
 ```
 memorija [--version]
 memorija serve [--stdio | --http] [--host <address>] [--port <number>]
+memorija list
+memorija show <file> [version] [--raw | --render]
+memorija versions <file>
+memorija changes [timespan]
 memorija help [command]
 ```
 
@@ -76,6 +80,11 @@ memorija help [command]
 - `--stdio` — serve over stdio (default; also the bare-invocation default)
 - `--http` — serve over Streamable HTTP (default port 8080, default host `127.0.0.1`)
 - `--host` / `--port` only apply to `--http`; mixing them with `--stdio` is a usage error
+- `list` — print a recursive listing of every memory file, with line counts and version ranges
+- `show <file> [version]` — print one memory file's content, optionally as of a past version; renders as styled markdown on a terminal, raw when piped, overridable with `--raw` or `--render`
+- `versions <file>` — print a file's version timeline (number, UTC timestamp, cause), oldest first
+- `changes [timespan]` — print a global change log across all files, newest first; `timespan` is `24h`-style durations, a `YYYY-MM-DD` date, a `START..END` date range, or `all` (default: last 7 days)
+- All four inspection commands are read-only: they never create or seed the memory root or the version store
 - `memorija help` shows the tool's purpose, version, build date, and usage
 - Invalid invocations exit non-zero and never create the memory root
 

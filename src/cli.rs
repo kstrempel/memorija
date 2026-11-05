@@ -31,23 +31,49 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-impl Cli {
-    /// The serve arguments, applying the bare-invocation default: no
-    /// subcommand behaves as `serve --stdio`.
-    pub fn serve_args(&self) -> ServeArgs {
-        self.command
-            .as_ref()
-            .map(|command| match command {
-                Command::Serve(args) => args.clone(),
-            })
-            .unwrap_or_default()
-    }
-}
-
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     /// Start the MCP server
     Serve(ServeArgs),
+    /// List every memory file with its line count
+    List,
+    /// Print one memory file, or one of its recorded versions
+    Show(ShowArgs),
+    /// Print a file's version timeline (version, time, cause)
+    Versions {
+        /// The memory file to inspect
+        file: String,
+    },
+    /// Print the global change log, newest first
+    Changes {
+        /// Timespan: <n>h, <n>d, <n>w, <n>m (a rolling 30-day window),
+        /// YYYY-MM-DD, START..END, or all [default: 7d]
+        #[arg(value_parser = timespan)]
+        timespan: Option<crate::inspect::Timespan>,
+    },
+}
+
+/// The clap value parser for the `changes` timespan: grammar errors surface
+/// as usage errors naming the value.
+fn timespan(spec: &str) -> Result<crate::inspect::Timespan, String> {
+    crate::inspect::parse_timespan(spec)
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct ShowArgs {
+    /// The memory file to print
+    pub file: String,
+
+    /// Print the content recorded at this version instead of the live file
+    pub version: Option<u64>,
+
+    /// Print raw content even when stdout is a terminal
+    #[arg(long)]
+    pub raw: bool,
+
+    /// Render markdown even when stdout is piped
+    #[arg(long)]
+    pub render: bool,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -100,16 +126,22 @@ impl ServeArgs {
     }
 }
 
-/// Parse the process arguments into the serve arguments, exiting with a clap
-/// usage error on invalid input (including the `--stdio`/`--http` conflict).
-pub fn parse() -> ServeArgs {
-    let args = Cli::parse().serve_args();
-    if let Err(message) = args.validate() {
-        Cli::command()
-            .error(ErrorKind::ArgumentConflict, message)
-            .exit();
+/// Parse the process arguments into the resolved subcommand, applying the
+/// bare-invocation default (`serve --stdio`) and the serve-argument
+/// validation. Invalid input exits with a clap usage error.
+pub fn parse_command() -> Command {
+    let command = match Cli::try_parse() {
+        Ok(cli) => cli.command.unwrap_or(Command::Serve(ServeArgs::default())),
+        Err(error) => error.exit(),
+    };
+    if let Command::Serve(args) = &command {
+        if let Err(message) = args.validate() {
+            Cli::command()
+                .error(ErrorKind::ArgumentConflict, message)
+                .exit();
+        }
     }
-    args
+    command
 }
 
 #[cfg(test)]
@@ -119,7 +151,15 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<ServeArgs, clap::Error> {
         Cli::try_parse_from(std::iter::once("memorija").chain(args.iter().copied()))
-            .map(|cli| cli.serve_args())
+            .map(|cli| match cli.command {
+                Some(Command::Serve(args)) => args,
+                _ => ServeArgs::default(),
+            })
+    }
+
+    fn parse_command(args: &[&str]) -> Result<Command, clap::Error> {
+        Cli::try_parse_from(std::iter::once("memorija").chain(args.iter().copied()))
+            .map(|cli| cli.command.unwrap_or(Command::Serve(ServeArgs::default())))
     }
 
     #[test]
@@ -308,5 +348,101 @@ mod tests {
         let err = parse(&["flush"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
         assert!(err.to_string().contains("flush"), "names flush: {err}");
+    }
+
+    #[test]
+    fn list_parses_as_a_subcommand() {
+        assert!(matches!(parse_command(&["list"]), Ok(Command::List)));
+    }
+
+    #[test]
+    fn help_lists_the_inspection_commands() {
+        let err = parse_command(&["--help"]).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("list"), "lists list: {text}");
+    }
+
+    #[test]
+    fn bare_invocation_still_resolves_to_serve() {
+        assert!(matches!(
+            parse_command(&[]),
+            Ok(Command::Serve(ServeArgs { .. }))
+        ));
+    }
+
+    #[test]
+    fn show_parses_file_version_and_flags() {
+        match parse_command(&["show", "notes.md"]).unwrap() {
+            Command::Show(args) => {
+                assert_eq!(args.file, "notes.md");
+                assert_eq!(args.version, None);
+                assert!(!args.raw && !args.render);
+            }
+            other => panic!("expected show: {other:?}"),
+        }
+
+        match parse_command(&["show", "notes.md", "2", "--raw"]).unwrap() {
+            Command::Show(args) => {
+                assert_eq!(args.version, Some(2));
+                assert!(args.raw);
+            }
+            other => panic!("expected show: {other:?}"),
+        }
+
+        match parse_command(&["show", "notes.md", "--render"]).unwrap() {
+            Command::Show(args) => assert!(args.render),
+            other => panic!("expected show: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn show_accepts_raw_and_render_together_raw_wins() {
+        // No clap conflict is declared (design D2): both flags parse, and the
+        // raw-wins decision is made by `inspect::force_raw`.
+        match parse_command(&["show", "notes.md", "--raw", "--render"]).unwrap() {
+            Command::Show(args) => assert!(args.raw && args.render),
+            other => panic!("expected show: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn versions_parses_the_file_argument() {
+        match parse_command(&["versions", "notes.md"]).unwrap() {
+            Command::Versions { file } => assert_eq!(file, "notes.md"),
+            other => panic!("expected versions: {other:?}"),
+        }
+        let err = parse_command(&["versions"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument, "a file is required: {err}");
+    }
+
+    #[test]
+    fn changes_parses_all_timespan_forms() {
+        match parse_command(&["changes"]).unwrap() {
+            Command::Changes { timespan } => assert_eq!(timespan, None),
+            other => panic!("expected changes: {other:?}"),
+        }
+        for (spec, expected) in [
+            ("24h", crate::inspect::Timespan::Window(24 * 3_600)),
+            (
+                "2026-11-01",
+                crate::inspect::parse_timespan("2026-11-01").unwrap(),
+            ),
+            ("all", crate::inspect::Timespan::All),
+        ] {
+            match parse_command(&["changes", spec]).unwrap() {
+                Command::Changes { timespan: Some(parsed) } => assert_eq!(parsed, expected, "{spec}"),
+                other => panic!("expected changes: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn unparseable_timespan_is_a_usage_error() {
+        let err = parse_command(&["changes", "not-a-timespan"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("not-a-timespan"), "names the value: {err}");
+        let err = parse_command(&["changes", "2026-10-31..2026-10-01"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("after its end"), "names the problem: {err}");
     }
 }

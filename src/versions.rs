@@ -106,7 +106,7 @@ fn record_file(store: &Path, rel_path: &str) -> Result<PathBuf, String> {
 /// Encode a relative path into one file-name component: `/` becomes `%2F`
 /// and every byte outside `[A-Za-z0-9._-]` becomes `%XX`, so the mapping is
 /// collision-free.
-fn encode_key(rel_path: &str) -> String {
+pub(crate) fn encode_key(rel_path: &str) -> String {
     let mut out = String::with_capacity(rel_path.len());
     for byte in rel_path.bytes() {
         match byte {
@@ -117,6 +117,29 @@ fn encode_key(rel_path: &str) -> String {
         }
     }
     out
+}
+
+/// The inverse of [`encode_key`]: decode a percent-encoded store file name
+/// (without its `.jsonl` suffix) back to the recorded relative path.
+pub fn decode_key(encoded: &str) -> String {
+    let bytes = encoded.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(byte) = std::str::from_utf8(&bytes[index + 1..index + 3])
+                .map_err(|_| ())
+                .and_then(|hex| u8::from_str_radix(hex, 16).map_err(|_| ()))
+            {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The sequence number of a store file's last record, or 0 when it is new.
@@ -139,12 +162,16 @@ fn latest_seq(file: &Path) -> Result<u64, String> {
     }
 }
 
-/// The current time as `YYYY-MM-DDTHH:MM:SSZ`.
-fn now_utc() -> String {
-    let secs = std::time::SystemTime::now()
+/// Seconds since the Unix epoch.
+pub(crate) fn now_secs() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// A seconds-since-the-epoch instant as `YYYY-MM-DDTHH:MM:SSZ`.
+pub(crate) fn format_utc(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (year, month, day) = civil_from_days(days);
@@ -156,9 +183,14 @@ fn now_utc() -> String {
     )
 }
 
+/// The current time as `YYYY-MM-DDTHH:MM:SSZ`.
+fn now_utc() -> String {
+    format_utc(now_secs())
+}
+
 /// Days since the Unix epoch to `(year, month, day)` in the proleptic
 /// Gregorian calendar (Hinnant's `civil_from_days`).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as u64; // [0, 146096]
@@ -254,5 +286,29 @@ mod tests {
         assert_eq!(nested[0].content, "nested\n");
         let tricky = read(&store, "a%2Fb.txt").unwrap();
         assert_eq!(tricky[0].content, "tricky\n");
+    }
+
+    #[test]
+    fn decode_key_reverses_the_slash_escape() {
+        assert_eq!(decode_key("a%2Fb.txt"), "a/b.txt");
+        assert_eq!(decode_key("a%252Fb.txt"), "a%2Fb.txt", "a literal %2F in a path is double-escaped");
+        assert_eq!(decode_key("plain.txt"), "plain.txt", "unencoded names pass through");
+        assert_eq!(decode_key("a%20b.md"), "a b.md", "spaces are decoded");
+        assert_eq!(decode_key("%C3%BCnicode.md"), "ünicode.md", "multi-byte UTF-8 reassembles");
+        assert_eq!(decode_key("broken%ZZ"), "broken%ZZ", "invalid escapes pass through");
+    }
+
+    #[test]
+    fn decode_key_round_trips_every_encoded_path() {
+        for path in [
+            "notes.txt",
+            "a/b.txt",
+            "a%2Fb.txt",
+            "projects/alpha 2026/ünï code.md",
+            "sp ace.txt",
+            "…ellipsis",
+        ] {
+            assert_eq!(decode_key(&encode_key(path)), path, "round trip of {path:?}");
+        }
     }
 }

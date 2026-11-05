@@ -99,8 +99,8 @@ fn view_version(
 }
 
 /// The record for `version` on `rel_path`, or an error naming the file's
-/// available version range.
-fn record_at(
+/// available version range. Shared with the CLI inspection layer.
+pub(crate) fn record_at(
     store: &Path,
     root: &Path,
     display: &str,
@@ -167,8 +167,9 @@ fn list_dir(root: &Path, path: &Path, display: &str) -> Result<String, String> {
 }
 
 /// Recursively collect `(line_count, display_path)` for every file under
-/// `dir`, with display paths relative to the listing root.
-fn walk(root: &Path, dir: &Path, display_root: &Path) -> Result<Vec<(String, String)>, String> {
+/// `dir`, with display paths relative to the listing root. Shared with the
+/// CLI inspection layer.
+pub(crate) fn walk(root: &Path, dir: &Path, display_root: &Path) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
         .map_err(|e| format!("Error: cannot read directory {}: {e}", dir.display()))?
@@ -390,8 +391,8 @@ fn restore(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, Strin
 }
 
 /// The path of a resolved target relative to the memory root — the key the
-/// version store records under.
-fn rel_key(root: &Path, target: &paths::Target) -> Result<String, String> {
+/// version store records under. Shared with the CLI inspection layer.
+pub(crate) fn rel_key(root: &Path, target: &paths::Target) -> Result<String, String> {
     let canon = root.canonicalize().map_err(|e| {
         format!("Error: the memory root {} is not accessible: {e}", root.display())
     })?;
@@ -425,16 +426,22 @@ fn write_new_content(target: &paths::Target, display: &str, content: &str) -> Re
         .map_err(|e| format!("Error: cannot write {display}: {e}"))
 }
 
-/// A compact change summary against the previous version (`+added -removed`
-/// with a short excerpt of the changed lines), for the `history` timeline.
-fn change_summary(previous: Option<&str>, content: &str) -> (String, Vec<String>) {
-    let old_lines: Vec<&str> = previous.unwrap_or_default().lines().collect();
-    let new_lines: Vec<&str> = content.lines().collect();
+/// Added/removed line counts between two file contents, trimming the common
+/// prefix and suffix so only the changed middle counts. Shared between the
+/// `history` summary and the CLI `changes` log.
+pub(crate) fn diff_counts(old: &str, new: &str) -> (usize, usize) {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let (added, removed) = changed_middle(&old_lines, &new_lines);
+    (added.len(), removed.len())
+}
 
-    let Some(_) = previous else {
-        return (format!("initial version ({} line(s))", new_lines.len()), Vec::new());
-    };
-
+/// The changed middle of two line lists: `(added, removed)` after trimming the
+/// common prefix and suffix.
+fn changed_middle<'a, 'b>(
+    old_lines: &'b [&'a str],
+    new_lines: &'b [&'a str],
+) -> (&'b [&'a str], &'b [&'a str]) {
     // Trim the common prefix and suffix; whatever remains changed.
     let mut start = 0;
     while start < old_lines.len()
@@ -452,6 +459,20 @@ fn change_summary(previous: Option<&str>, content: &str) -> (String, Vec<String>
     }
     let removed = &old_lines[start..old_lines.len() - end];
     let added = &new_lines[start..new_lines.len() - end];
+    (added, removed)
+}
+
+/// A compact change summary against the previous version (`+added -removed`
+/// with a short excerpt of the changed lines), for the `history` timeline.
+fn change_summary(previous: Option<&str>, content: &str) -> (String, Vec<String>) {
+    let new_lines: Vec<&str> = content.lines().collect();
+
+    let Some(previous) = previous else {
+        return (format!("initial version ({} line(s))", new_lines.len()), Vec::new());
+    };
+
+    let old_lines: Vec<&str> = previous.lines().collect();
+    let (added, removed) = changed_middle(&old_lines, &new_lines);
 
     let mut excerpt = Vec::new();
     for line in removed.iter().take(2) {
