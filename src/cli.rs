@@ -8,16 +8,30 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 /// Default port for the HTTP transport.
 pub const DEFAULT_HTTP_PORT: u16 = 8080;
 
+/// Default port for the web viewer (one above the MCP HTTP transport, so
+/// both can run at once).
+pub const DEFAULT_WEB_PORT: u16 = 8081;
+
 /// Default bind address for the HTTP transport.
 pub const DEFAULT_HTTP_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 /// Version line reported by `--version`: the crate version plus the UTC
 /// build date captured by `build.rs` (design D2).
-pub const VERSION_LINE: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (built ", env!("BUILD_DATE"), ")");
+pub const VERSION_LINE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (built ",
+    env!("BUILD_DATE"),
+    ")"
+);
 
 /// Version line with the tool name, shown under the `help` usage.
-pub const AFTER_HELP: &str = concat!("memorija ", env!("CARGO_PKG_VERSION"), " (built ", env!("BUILD_DATE"), ")");
+pub const AFTER_HELP: &str = concat!(
+    "memorija ",
+    env!("CARGO_PKG_VERSION"),
+    " (built ",
+    env!("BUILD_DATE"),
+    ")"
+);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -35,6 +49,8 @@ pub struct Cli {
 pub enum Command {
     /// Start the MCP server
     Serve(ServeArgs),
+    /// Start the local, read-only web viewer
+    Web(WebArgs),
     /// List every memory file with its line count
     List,
     /// Print one memory file, or one of its recorded versions
@@ -102,6 +118,24 @@ pub enum Transport {
     Http { host: IpAddr, port: u16 },
 }
 
+/// Arguments of the `web` subcommand (spec: `web-ui`): a local, read-only
+/// viewer binding to the loopback by default, on port 8081 so the MCP HTTP
+/// transport (8080) can run beside it.
+#[derive(Debug, Clone, Args)]
+pub struct WebArgs {
+    /// Port the web server listens on
+    #[arg(long, default_value_t = DEFAULT_WEB_PORT, value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: u16,
+
+    /// Address the web server binds to (default 127.0.0.1)
+    #[arg(long, default_value_t = DEFAULT_HTTP_HOST)]
+    pub host: IpAddr,
+
+    /// Do not open the main page in the system browser
+    #[arg(long)]
+    pub no_open: bool,
+}
+
 impl ServeArgs {
     /// Enforce the mutual exclusion of `--stdio` and `--http` that cannot be
     /// declared via `conflicts_with`: clap drops `requires` requirements that
@@ -150,11 +184,12 @@ mod tests {
     use clap::error::ErrorKind;
 
     fn parse(args: &[&str]) -> Result<ServeArgs, clap::Error> {
-        Cli::try_parse_from(std::iter::once("memorija").chain(args.iter().copied()))
-            .map(|cli| match cli.command {
+        Cli::try_parse_from(std::iter::once("memorija").chain(args.iter().copied())).map(|cli| {
+            match cli.command {
                 Some(Command::Serve(args)) => args,
                 _ => ServeArgs::default(),
-            })
+            }
+        })
     }
 
     fn parse_command(args: &[&str]) -> Result<Command, clap::Error> {
@@ -167,8 +202,14 @@ mod tests {
         let err = parse(&["--version"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::DisplayVersion);
         let text = err.to_string();
-        assert!(text.starts_with("memorija "), "starts with the tool name: {text}");
-        assert!(text.contains(env!("CARGO_PKG_VERSION")), "names the version: {text}");
+        assert!(
+            text.starts_with("memorija "),
+            "starts with the tool name: {text}"
+        );
+        assert!(
+            text.contains(env!("CARGO_PKG_VERSION")),
+            "names the version: {text}"
+        );
         let date = built_date(&text).expect("build date: {text}");
         assert_eq!(date.len(), 10, "YYYY-MM-DD form");
         let bytes = date.as_bytes();
@@ -197,7 +238,10 @@ mod tests {
             text.contains("Persistent memory files"),
             "states the tool purpose: {text}"
         );
-        assert!(text.contains(env!("CARGO_PKG_VERSION")), "names the version: {text}");
+        assert!(
+            text.contains(env!("CARGO_PKG_VERSION")),
+            "names the version: {text}"
+        );
         assert!(built_date(&text).is_some(), "contains a build date: {text}");
         assert!(text.contains("serve"), "lists serve: {text}");
     }
@@ -230,7 +274,10 @@ mod tests {
                 port: 8080
             }
         );
-        assert_eq!(DEFAULT_HTTP_HOST, std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        assert_eq!(
+            DEFAULT_HTTP_HOST,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        );
     }
 
     #[test]
@@ -287,7 +334,10 @@ mod tests {
     fn invalid_host_is_rejected() {
         let err = parse(&["serve", "--http", "--host", "not-an-address"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ValueValidation);
-        assert!(err.to_string().contains("not-an-address"), "names the value: {err}");
+        assert!(
+            err.to_string().contains("not-an-address"),
+            "names the value: {err}"
+        );
     }
 
     #[test]
@@ -348,6 +398,88 @@ mod tests {
         let err = parse(&["flush"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
         assert!(err.to_string().contains("flush"), "names flush: {err}");
+    }
+
+    #[test]
+    fn web_parses_with_defaults() {
+        match parse_command(&["web"]).unwrap() {
+            Command::Web(args) => {
+                assert_eq!(args.port, DEFAULT_WEB_PORT, "default port 8081");
+                assert_eq!(args.host, DEFAULT_HTTP_HOST, "default host 127.0.0.1");
+                assert!(!args.no_open);
+            }
+            other => panic!("expected web: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_with_port_maps_to_that_port() {
+        match parse_command(&["web", "--port", "9090"]).unwrap() {
+            Command::Web(args) => assert_eq!(args.port, 9090),
+            other => panic!("expected web: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_with_host_maps_to_that_host() {
+        match parse_command(&["web", "--host", "0.0.0.0"]).unwrap() {
+            Command::Web(args) => {
+                assert_eq!(
+                    args.host,
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+                )
+            }
+            other => panic!("expected web: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_with_host_and_port_maps_to_both() {
+        match parse_command(&["web", "--host", "::1", "--port", "9090"]).unwrap() {
+            Command::Web(args) => {
+                assert_eq!(
+                    args.host,
+                    std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+                );
+                assert_eq!(args.port, 9090);
+            }
+            other => panic!("expected web: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_no_open_flag_is_set() {
+        match parse_command(&["web", "--no-open"]).unwrap() {
+            Command::Web(args) => assert!(args.no_open),
+            other => panic!("expected web: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_out_of_range_port_is_rejected() {
+        let err = parse_command(&["web", "--port", "70000"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("70000"), "names the port: {err}");
+    }
+
+    #[test]
+    fn web_invalid_host_is_rejected() {
+        let err = parse_command(&["web", "--host", "not-an-address"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ValueValidation);
+        assert!(
+            err.to_string().contains("not-an-address"),
+            "names the value: {err}"
+        );
+    }
+
+    #[test]
+    fn help_web_prints_web_usage() {
+        let err = parse_command(&["help", "web"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        let text = err.to_string();
+        for flag in ["--host", "--port", "--no-open"] {
+            assert!(text.contains(flag), "mentions {flag}: {text}");
+        }
     }
 
     #[test]
@@ -412,7 +544,11 @@ mod tests {
             other => panic!("expected versions: {other:?}"),
         }
         let err = parse_command(&["versions"]).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument, "a file is required: {err}");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::MissingRequiredArgument,
+            "a file is required: {err}"
+        );
     }
 
     #[test]
@@ -430,7 +566,9 @@ mod tests {
             ("all", crate::inspect::Timespan::All),
         ] {
             match parse_command(&["changes", spec]).unwrap() {
-                Command::Changes { timespan: Some(parsed) } => assert_eq!(parsed, expected, "{spec}"),
+                Command::Changes {
+                    timespan: Some(parsed),
+                } => assert_eq!(parsed, expected, "{spec}"),
                 other => panic!("expected changes: {other:?}"),
             }
         }
@@ -440,9 +578,15 @@ mod tests {
     fn unparseable_timespan_is_a_usage_error() {
         let err = parse_command(&["changes", "not-a-timespan"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ValueValidation);
-        assert!(err.to_string().contains("not-a-timespan"), "names the value: {err}");
+        assert!(
+            err.to_string().contains("not-a-timespan"),
+            "names the value: {err}"
+        );
         let err = parse_command(&["changes", "2026-10-31..2026-10-01"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ValueValidation);
-        assert!(err.to_string().contains("after its end"), "names the problem: {err}");
+        assert!(
+            err.to_string().contains("after its end"),
+            "names the problem: {err}"
+        );
     }
 }

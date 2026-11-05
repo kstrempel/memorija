@@ -23,6 +23,8 @@ back up or edit by hand.
   (see [Versioning](#versioning)).
 - **Sandboxed paths** — every path is resolved inside the memory root;
   `..` traversal and symlinks that lead outside are refused.
+- **Web viewer** — `memorija web` opens a local, read-only page of your
+  memory: a live changes feed and rendered files, updating on their own.
 - **Two transports** — stdio for locally launched clients, Streamable HTTP for
   shared or remote connections.
 - **Tool-level errors** — recoverable failures come back as `isError` results
@@ -69,6 +71,7 @@ authentication**; it warns on startup when binding to a non-loopback address.
 ```
 memorija [--version]
 memorija serve [--stdio | --http] [--host <address>] [--port <number>]
+memorija web [--host <address>] [--port <number>] [--no-open]
 memorija list
 memorija show <file> [version] [--raw | --render]
 memorija versions <file>
@@ -87,6 +90,37 @@ memorija help [command]
 - All four inspection commands are read-only: they never create or seed the memory root or the version store
 - `memorija help` shows the tool's purpose, version, build date, and usage
 - Invalid invocations exit non-zero and never create the memory root
+
+### Web viewer
+
+```sh
+memorija web                                # http://127.0.0.1:8081/
+memorija web --host 0.0.0.0 --port 9000
+memorija web --no-open
+```
+
+`web` starts a local, read-only web viewer of your memory files and tries to
+open the main page in the system browser (the URL is printed either way;
+`--no-open` skips the browser launch). It has **no authentication** and warns
+on startup when binding to a non-loopback address. Defaults: port `8081`
+(beside `serve --http`'s 8080), host `127.0.0.1`.
+
+The viewer offers no way to modify memories — it only reads the memory root
+and the version store, and never creates or seeds either.
+
+- The **changes feed** (top of the page) lists every recorded change newest
+  first: time, file path, cause, and a `+N -M` line-count summary. A fresh
+  machine with no recorded changes shows an empty-state message.
+- Below the feed, the **most recently changed file** is rendered from
+  markdown as HTML. Clicking a feed row shows that file instead, at its own
+  address (`/?path=<file>`), so reloading or bookmarking returns to it.
+- The page **updates on its own**: the server polls the version store every
+  second and pushes new changes over Server-Sent Events — no manual reload.
+- Requesting a path that does not exist shows a clear not-found message;
+  paths that escape the memory root (by `..` traversal or a symlink pointing
+  outside) are refused, exactly as in the CLI and MCP surfaces. Rendered
+  markdown never executes scripts: HTML inside a memory file displays as
+  text.
 
 ## The memory tool
 

@@ -8,6 +8,7 @@ mod serve;
 #[cfg(test)]
 mod testutil;
 mod versions;
+mod web;
 
 use args::MemoryArgs;
 use rmcp::{
@@ -28,7 +29,8 @@ impl Memorija {
         Self { root }
     }
 
-    #[tool(description = "Persistent memory files for the user and their work across sessions. \
+    #[tool(
+        description = "Persistent memory files for the user and their work across sessions. \
 RECALL - For non-trivial tasks, view `/memories` at the start of a session or when \
 picked up mid-session, and read what's relevant before working. Consult memory before \
 answering anything about the user's past work, preferences, or projects. \
@@ -55,7 +57,8 @@ cause, change summary). `view` with `version: N` reads the file's past content a
 version N. `restore` with `version: N` reverts the file to a past version by recording \
 a new version — history is never rewritten, so a restore is itself undoable. \
 Recoverable failures are reported as error results you can \
-retry with corrected arguments.")]
+retry with corrected arguments."
+    )]
     async fn memory(
         &self,
         Parameters(args): Parameters<MemoryArgs>,
@@ -74,6 +77,13 @@ impl ServerHandler for Memorija {}
 async fn main() -> std::process::ExitCode {
     match cli::parse_command() {
         cli::Command::Serve(args) => match serve::run_server(args.transport()).await {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        },
+        cli::Command::Web(args) => match web::run_web(&args).await {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("Error: {error}");

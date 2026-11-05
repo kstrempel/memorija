@@ -37,6 +37,7 @@ pub fn run(command: &cli::Command) -> Result<(), String> {
             Ok(())
         }
         cli::Command::Serve(_) => unreachable!("serve never reaches the inspection layer"),
+        cli::Command::Web(_) => unreachable!("web never reaches the inspection layer"),
     }
 }
 
@@ -88,9 +89,19 @@ fn available_versions(root: &Path) -> Result<std::collections::HashMap<String, u
     let mut last_seqs = std::collections::HashMap::new();
     if store.is_dir() {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&store)
-            .map_err(|e| format!("Error: cannot read the version store {}: {e}", store.display()))?
+            .map_err(|e| {
+                format!(
+                    "Error: cannot read the version store {}: {e}",
+                    store.display()
+                )
+            })?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Error: cannot read the version store {}: {e}", store.display()))?
+            .map_err(|e| {
+                format!(
+                    "Error: cannot read the version store {}: {e}",
+                    store.display()
+                )
+            })?
             .into_iter()
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
             .map(|entry| entry.path())
@@ -147,14 +158,16 @@ fn show_content(root: &Path, args: &cli::ShowArgs) -> Result<String, String> {
     if target.is_root {
         return Err(format!("Error: {} is a directory", args.file));
     }
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(&args.file))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(&args.file))?;
     if meta.is_dir() {
         return Err(format!("Error: The path {} is a directory", args.file));
     }
     match args.version {
         None => std::fs::read_to_string(&target.path).map_err(|e| {
-            format!("Error: The path {} is not a readable text file: {e}", args.file)
+            format!(
+                "Error: The path {} is not a readable text file: {e}",
+                args.file
+            )
         }),
         Some(version) => {
             let store = versions::store_dir(root);
@@ -205,7 +218,7 @@ pub fn parse_timespan(spec: &str) -> Result<Timespan, String> {
             _ => {
                 return Err(format!(
                     "invalid timespan `{spec}`; expected <n>h, <n>d, <n>w, <n>m, YYYY-MM-DD, START..END, or all"
-                ))
+                ));
             }
         };
         if start > end {
@@ -303,11 +316,30 @@ fn changes_output(root: &Path, timespan: Option<&Timespan>) -> Result<String, St
     }
 }
 
-/// The `changes` global log: scan every per-path JSONL in the version store
-/// (design D4), filter by the timespan cutoff, sort newest first with a
-/// path/seq tiebreak, and print date, time, path, cause, and the `+N -M`
-/// line-count summary against the previous version.
-fn changes(root: &Path, timespan: Option<&Timespan>) -> Result<String, String> {
+/// One recorded change in structured form (design D5): the version record
+/// plus its `+N -M` line-count summary against the previous version. Shared
+/// by the CLI `changes` text output and the web JSON API.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ChangeRecord {
+    /// UTC timestamp of the change (`YYYY-MM-DDTHH:MM:SSZ`).
+    pub recorded_at: String,
+    /// Path of the memory file, relative to the memory root.
+    pub path: String,
+    /// Per-path 1-based sequence number.
+    pub seq: u64,
+    /// The command that produced this version.
+    pub cause: String,
+    /// Lines added against the previous version.
+    pub added: usize,
+    /// Lines removed against the previous version.
+    pub removed: usize,
+}
+
+/// The structured store scan behind `changes` (design D5): every recorded
+/// change across all files, filtered by the timespan cutoff, newest first
+/// with a path/seq tiebreak. `None` timespan means the CLI default (7d); the
+/// web feed passes `Some(&Timespan::All)`.
+pub fn scan_changes(root: &Path, timespan: Option<&Timespan>) -> Result<Vec<ChangeRecord>, String> {
     const DEFAULT: Timespan = Timespan::Window(7 * DAY);
     let (start, end) = cutoffs(timespan.unwrap_or(&DEFAULT), crate::versions::now_secs());
 
@@ -315,9 +347,19 @@ fn changes(root: &Path, timespan: Option<&Timespan>) -> Result<String, String> {
     let mut per_path: Vec<Vec<crate::versions::Record>> = Vec::new();
     if store.is_dir() {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&store)
-            .map_err(|e| format!("Error: cannot read the version store {}: {e}", store.display()))?
+            .map_err(|e| {
+                format!(
+                    "Error: cannot read the version store {}: {e}",
+                    store.display()
+                )
+            })?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Error: cannot read the version store {}: {e}", store.display()))?
+            .map_err(|e| {
+                format!(
+                    "Error: cannot read the version store {}: {e}",
+                    store.display()
+                )
+            })?
             .into_iter()
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
             .map(|entry| entry.path())
@@ -334,43 +376,53 @@ fn changes(root: &Path, timespan: Option<&Timespan>) -> Result<String, String> {
         }
     }
 
-    let mut lines: Vec<(String, String, u64, String, usize, usize)> = Vec::new();
-    for records in &per_path {
-        for (index, record) in records.iter().enumerate() {
+    let mut records: Vec<ChangeRecord> = Vec::new();
+    for path_records in &per_path {
+        for (index, record) in path_records.iter().enumerate() {
             if record.recorded_at.as_str() < start.as_str()
                 || record.recorded_at.as_str() >= end.as_str()
             {
                 continue;
             }
-            let previous = if index == 0 { "" } else { records[index - 1].content.as_str() };
+            let previous = if index == 0 {
+                ""
+            } else {
+                path_records[index - 1].content.as_str()
+            };
             let (added, removed) = ops::diff_counts(previous, &record.content);
-            lines.push((
-                record.recorded_at.clone(),
-                record.path.clone(),
-                record.seq,
-                record.cause.clone(),
+            records.push(ChangeRecord {
+                recorded_at: record.recorded_at.clone(),
+                path: record.path.clone(),
+                seq: record.seq,
+                cause: record.cause.clone(),
                 added,
                 removed,
-            ));
+            });
         }
     }
     // Newest first; ties are stable on path, then seq (design D4).
-    lines.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.cmp(&b.2))
+    records.sort_by(|a, b| {
+        b.recorded_at
+            .cmp(&a.recorded_at)
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.seq.cmp(&b.seq))
     });
+    Ok(records)
+}
 
+/// The `changes` global log: the shared structured scan (design D5) printed
+/// as date, time, path, cause, and the `+N -M` line-count summary.
+fn changes(root: &Path, timespan: Option<&Timespan>) -> Result<String, String> {
     let mut out = String::new();
-    for (recorded_at, path, _seq, cause, added, removed) in &lines {
+    for record in scan_changes(root, timespan)? {
         out.push_str(&format!(
             "{} {}\t{}\t{}\t+{} -{}\n",
-            &recorded_at[..10],
-            &recorded_at[11..19],
-            path,
-            cause,
-            added,
-            removed
+            &record.recorded_at[..10],
+            &record.recorded_at[11..19],
+            record.path,
+            record.cause,
+            record.added,
+            record.removed
         ));
     }
     Ok(out)
@@ -390,9 +442,7 @@ fn versions_output(root: &Path, file: &str) -> Result<String, String> {
 fn versions_table(root: &Path, file: &str) -> Result<String, String> {
     let target = paths::resolve(root, file)?;
     if target.is_root {
-        return Err(
-            "Error: the memory root itself has no version records".to_string()
-        );
+        return Err("Error: the memory root itself has no version records".to_string());
     }
     std::fs::symlink_metadata(&target.path).map_err(|_| missing(file))?;
     let rel = ops::rel_key(root, &target)?;
@@ -404,7 +454,10 @@ fn versions_table(root: &Path, file: &str) -> Result<String, String> {
     }
     let mut out = String::new();
     for record in &records {
-        out.push_str(&format!("v{}\t{}\t{}\n", record.seq, record.recorded_at, record.cause));
+        out.push_str(&format!(
+            "v{}\t{}\t{}\n",
+            record.seq, record.recorded_at, record.cause
+        ));
     }
     Ok(out)
 }
@@ -431,8 +484,7 @@ impl MemoryRoot {
 /// Resolve the memory root without ever creating it: `root::resolve` only
 /// computes the path, and existence decides the fresh-machine condition.
 pub fn resolve_root() -> Result<MemoryRoot, String> {
-    let root = root::resolve()
-        .map_err(|e| format!("Error: cannot locate the memory root: {e}"))?;
+    let root = root::resolve().map_err(|e| format!("Error: cannot locate the memory root: {e}"))?;
     Ok(inspect_root(&root))
 }
 
@@ -490,16 +542,31 @@ mod tests {
         let home = temp_dir("inspect-list-versions");
         let root = root::root_in(&home);
         root::ensure(&root).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/edited.md", "one\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/edited.md", "two\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/edited.md", "three\n")).unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/edited.md", "one\n"),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/edited.md", "two\n"),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/edited.md", "three\n"),
+        )
+        .unwrap();
         ops::run(&root, &memory_args("create", "/memories/once.md", "only\n")).unwrap();
         std::fs::write(root.join("by-hand.md"), "never recorded\n").unwrap();
 
         let out = list_output(&root).unwrap();
         assert!(out.contains("edited.md\t1\tv1..v3"), "{out}");
         assert!(out.contains("once.md\t1\tv1"), "{out}");
-        assert!(out.contains("by-hand.md\t1\t-"), "unrecorded files show no versions: {out}");
+        assert!(
+            out.contains("by-hand.md\t1\t-"),
+            "unrecorded files show no versions: {out}"
+        );
     }
 
     #[test]
@@ -545,8 +612,16 @@ mod tests {
         let home = temp_dir("inspect-show");
         let root = root::root_in(&home);
         root::ensure(&root).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/notes.md", "first draft\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/notes.md", "second draft\n")).unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/notes.md", "first draft\n"),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/notes.md", "second draft\n"),
+        )
+        .unwrap();
 
         let live = show_content(&root, &show_args("notes.md", None)).unwrap();
         assert_eq!(live, "second draft\n");
@@ -598,7 +673,11 @@ mod tests {
         root::ensure(&root).unwrap();
         ops::run(&root, &memory_args("create", "/memories/notes.md", "one\n")).unwrap();
         ops::run(&root, &memory_args("create", "/memories/notes.md", "two\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/notes.md", "three\n")).unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/notes.md", "three\n"),
+        )
+        .unwrap();
 
         let out = versions_table(&root, "notes.md").unwrap();
         let v1 = out.find("v1").expect("v1 row");
@@ -636,23 +715,45 @@ mod tests {
         assert_eq!(parse_timespan("24h"), Ok(Window(24 * HOUR)));
         assert_eq!(parse_timespan("7d"), Ok(Window(7 * DAY)));
         assert_eq!(parse_timespan("2w"), Ok(Window(2 * WEEK)));
-        assert_eq!(parse_timespan("3m"), Ok(Window(3 * MONTH)), "`m` is a rolling 30-day window");
+        assert_eq!(
+            parse_timespan("3m"),
+            Ok(Window(3 * MONTH)),
+            "`m` is a rolling 30-day window"
+        );
         // Absolute date and range.
         let first = days_from_civil(2026, 11, 1);
         let last = days_from_civil(2026, 10, 31);
         assert_eq!(parse_timespan("2026-11-01"), Ok(Since(first)));
         assert_eq!(
             parse_timespan("2026-10-01..2026-10-31"),
-            Ok(Range { start: days_from_civil(2026, 10, 1), end: last })
+            Ok(Range {
+                start: days_from_civil(2026, 10, 1),
+                end: last
+            })
         );
         assert_eq!(parse_timespan("all"), Ok(All));
     }
 
     #[test]
     fn invalid_timespans_name_the_value() {
-        for spec in ["", "7", "7x", "x", "d7", "0d", "2026-13-01", "2026-00-05", "2026-2-3", "01-02-2026", "bogus"] {
+        for spec in [
+            "",
+            "7",
+            "7x",
+            "x",
+            "d7",
+            "0d",
+            "2026-13-01",
+            "2026-00-05",
+            "2026-2-3",
+            "01-02-2026",
+            "bogus",
+        ] {
             let err = parse_timespan(spec).unwrap_err();
-            assert!(err.contains(spec), "names the invalid value {spec:?}: {err}");
+            assert!(
+                err.contains(spec),
+                "names the invalid value {spec:?}: {err}"
+            );
         }
     }
 
@@ -669,7 +770,10 @@ mod tests {
         // A rolling window ends at now, starts window seconds before.
         let (start, end) = cutoffs(&Window(2 * DAY), NOW);
         assert_eq!(start, "2027-01-13T08:00:00Z");
-        assert_eq!(end, "2027-01-15T08:00:01Z", "second resolution keeps the query second visible");
+        assert_eq!(
+            end, "2027-01-15T08:00:01Z",
+            "second resolution keeps the query second visible"
+        );
         // The 30-day `m` semantics: 3m is exactly 90 days.
         let (start, _) = cutoffs(&Window(3 * MONTH), NOW);
         assert_eq!(start, "2026-10-17T08:00:00Z");
@@ -679,7 +783,10 @@ mod tests {
         assert_eq!(end, FAR_FUTURE_END);
         // A range includes its end day: cutoff_end is the day after.
         let (start, end) = cutoffs(
-            &Range { start: days_from_civil(2026, 10, 1), end: days_from_civil(2026, 10, 31) },
+            &Range {
+                start: days_from_civil(2026, 10, 1),
+                end: days_from_civil(2026, 10, 31),
+            },
             NOW,
         );
         assert_eq!(start, "2026-10-01T00:00:00Z");
@@ -713,7 +820,13 @@ mod tests {
             format!(
                 "{}\n{}\n",
                 record("a.txt", 1, "a1\na2\na3\n", "create", "2027-01-01T10:00:00Z"),
-                record("a.txt", 2, "a1\na2\na3b\n", "str_replace", "2027-01-05T12:30:00Z"),
+                record(
+                    "a.txt",
+                    2,
+                    "a1\na2\na3b\n",
+                    "str_replace",
+                    "2027-01-05T12:30:00Z"
+                ),
             ),
         )
         .unwrap();
@@ -734,7 +847,9 @@ mod tests {
         .unwrap();
 
         let out = changes_output(&root, Some(&Timespan::All)).unwrap();
-        let a_edit = out.find("a.txt\tstr_replace\t+1 -1").expect("a.txt edit row");
+        let a_edit = out
+            .find("a.txt\tstr_replace\t+1 -1")
+            .expect("a.txt edit row");
         let c1 = out.find("c1.txt\tcreate\t+1 -0").expect("c1 row");
         let c2 = out.find("c2.txt\tcreate\t+1 -0").expect("c2 row");
         let b = out.find("b.txt\tcreate\t+1 -0").expect("b.txt row");
@@ -745,7 +860,11 @@ mod tests {
         // Date, time, path, cause, summary columns on every line.
         for line in out.lines() {
             let columns: Vec<&str> = line.split('\t').collect();
-            assert_eq!(columns.len(), 4, "date time / path / cause / summary: {line}");
+            assert_eq!(
+                columns.len(),
+                4,
+                "date time / path / cause / summary: {line}"
+            );
             assert!(columns[0].contains(' ') && columns[0].len() == 19, "{line}");
         }
     }
@@ -770,7 +889,11 @@ mod tests {
         let home = temp_dir("inspect-changes-default");
         let root = root::root_in(&home);
         root::ensure(&root).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/new.txt", "fresh\n")).unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/new.txt", "fresh\n"),
+        )
+        .unwrap();
 
         let default = changes_output(&root, None).unwrap();
         let explicit = changes_output(&root, Some(&Timespan::Window(7 * DAY))).unwrap();
@@ -784,7 +907,10 @@ mod tests {
         let out = changes_output(&root, None).unwrap();
         assert_eq!(out, "no memories yet\n");
         assert!(!root.exists(), "must not create the root");
-        assert!(!crate::versions::store_dir(&root).exists(), "must not create the store");
+        assert!(
+            !crate::versions::store_dir(&root).exists(),
+            "must not create the store"
+        );
     }
 
     /// The inspection commands against the real layout (`HOME/.memorija`
@@ -797,10 +923,30 @@ mod tests {
         root::ensure(&root).unwrap();
 
         // create + two edits through the tool: three recorded versions.
-        ops::run(&root, &memory_args("create", "/memories/demo/notes.md", "first draft\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/demo/notes.md", "second draft\nmore\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/demo/notes.md", "second draft\nmore\nand more\n")).unwrap();
-        ops::run(&root, &memory_args("create", "/memories/MEMORY.md", "index\n")).unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/demo/notes.md", "first draft\n"),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/demo/notes.md", "second draft\nmore\n"),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args(
+                "create",
+                "/memories/demo/notes.md",
+                "second draft\nmore\nand more\n",
+            ),
+        )
+        .unwrap();
+        ops::run(
+            &root,
+            &memory_args("create", "/memories/MEMORY.md", "index\n"),
+        )
+        .unwrap();
 
         // list: nested files with line counts and version ranges.
         let out = list_output(&root).unwrap();
@@ -837,4 +983,3 @@ mod tests {
         assert!(err.contains("1..=3"), "{err}");
     }
 }
-

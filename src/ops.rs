@@ -23,9 +23,7 @@ pub fn run_in(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, St
     let command = match &args.command {
         CommandArg::Known(command) => command.clone(),
         CommandArg::Unknown(value) => {
-            let supported = Command::ALL
-                .map(|c| c.as_str())
-                .join(", ");
+            let supported = Command::ALL.map(|c| c.as_str()).join(", ");
             return Err(format!(
                 "Error: unknown command `{value}`. Supported commands are: {supported}"
             ));
@@ -64,8 +62,7 @@ fn view(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String> 
         return view_version(store, root, &args.path, &target, version, args.view_range);
     }
 
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(&args.path))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(&args.path))?;
 
     if meta.is_dir() {
         // `view_range` is ignored for directory listings.
@@ -87,8 +84,7 @@ fn view_version(
     version: i64,
     range: Option<[i64; 2]>,
 ) -> Result<String, String> {
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(display))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(display))?;
     if meta.is_dir() {
         return Err(format!(
             "Error: `version` applies to files only; {display} is a directory"
@@ -169,7 +165,11 @@ fn list_dir(root: &Path, path: &Path, display: &str) -> Result<String, String> {
 /// Recursively collect `(line_count, display_path)` for every file under
 /// `dir`, with display paths relative to the listing root. Shared with the
 /// CLI inspection layer.
-pub(crate) fn walk(root: &Path, dir: &Path, display_root: &Path) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn walk(
+    root: &Path,
+    dir: &Path,
+    display_root: &Path,
+) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
         .map_err(|e| format!("Error: cannot read directory {}: {e}", dir.display()))?
@@ -204,8 +204,9 @@ fn create(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String
     let target = paths::resolve(root, &args.path)?;
     if target.is_root {
         return Err(format!(
-            "Error: cannot create the memory root itself ({})"
-        , args.path));
+            "Error: cannot create the memory root itself ({})",
+            args.path
+        ));
     }
     if let Ok(meta) = std::fs::symlink_metadata(&target.path) {
         if meta.is_dir() {
@@ -244,9 +245,9 @@ fn str_replace(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, S
 }
 
 fn insert(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String> {
-    let insert_line = args.insert_line.ok_or_else(|| {
-        "Error: `insert_line` is required for the `insert` command".to_string()
-    })?;
+    let insert_line = args
+        .insert_line
+        .ok_or_else(|| "Error: `insert_line` is required for the `insert` command".to_string())?;
     let insert_text = require(&args.insert_text, "insert_text", Command::Insert)?;
     let target = paths::resolve(root, &args.path)?;
     let content = read_target_file(root, &args.path, &target)?;
@@ -254,10 +255,7 @@ fn insert(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String
     let mut lines: Vec<String> = if content.is_empty() {
         Vec::new()
     } else {
-        content
-            .lines()
-            .map(|line| line.to_string())
-            .collect()
+        content.lines().map(|line| line.to_string()).collect()
     };
     let count = lines.len() as i64;
     if insert_line < 0 || insert_line > count {
@@ -268,7 +266,11 @@ fn insert(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String
     let position = insert_line as usize;
     lines.splice(
         position..position,
-        insert_text.strip_suffix('\n').unwrap_or(insert_text).split('\n').map(str::to_string),
+        insert_text
+            .strip_suffix('\n')
+            .unwrap_or(insert_text)
+            .split('\n')
+            .map(str::to_string),
     );
     let mut updated = lines.join("\n");
     if content.ends_with('\n') {
@@ -288,8 +290,7 @@ fn delete(root: &Path, args: &MemoryArgs) -> Result<String, String> {
             args.path
         ));
     }
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(&args.path))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(&args.path))?;
     if meta.is_dir() {
         std::fs::remove_dir_all(&target.path)
             .map_err(|e| format!("Error: cannot delete {}: {e}", args.path))?;
@@ -316,10 +317,12 @@ fn rename(root: &Path, args: &MemoryArgs) -> Result<String, String> {
             new_path
         ));
     }
-    std::fs::symlink_metadata(&source.path)
-        .map_err(|_| missing(&args.path))?;
+    std::fs::symlink_metadata(&source.path).map_err(|_| missing(&args.path))?;
     if std::fs::symlink_metadata(&destination.path).is_ok() {
-        return Err(format!("Error: The destination {} already exists", new_path));
+        return Err(format!(
+            "Error: The destination {} already exists",
+            new_path
+        ));
     }
     if let Some(parent) = destination.path.parent() {
         std::fs::create_dir_all(parent)
@@ -368,9 +371,9 @@ fn history(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, Strin
 }
 
 fn restore(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String> {
-    let version = args.version.ok_or_else(|| {
-        "Error: `version` is required for the `restore` command".to_string()
-    })?;
+    let version = args
+        .version
+        .ok_or_else(|| "Error: `version` is required for the `restore` command".to_string())?;
     let target = paths::resolve(root, &args.path)?;
     if target.is_root {
         return Err(format!(
@@ -378,8 +381,7 @@ fn restore(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, Strin
             args.path
         ));
     }
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(&args.path))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(&args.path))?;
     if meta.is_dir() {
         return Err(format!("Error: The path {} is a directory", args.path));
     }
@@ -394,13 +396,18 @@ fn restore(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, Strin
 /// version store records under. Shared with the CLI inspection layer.
 pub(crate) fn rel_key(root: &Path, target: &paths::Target) -> Result<String, String> {
     let canon = root.canonicalize().map_err(|e| {
-        format!("Error: the memory root {} is not accessible: {e}", root.display())
+        format!(
+            "Error: the memory root {} is not accessible: {e}",
+            root.display()
+        )
     })?;
     target
         .path
         .strip_prefix(&canon)
         .map(|rel| rel.to_string_lossy().into_owned())
-        .map_err(|_| "Error: internal path bookkeeping failed (target outside the memory root)".to_string())
+        .map_err(|_| {
+            "Error: internal path bookkeeping failed (target outside the memory root)".to_string()
+        })
 }
 
 /// Append a version record for a successful content change.
@@ -422,8 +429,7 @@ fn write_new_content(target: &paths::Target, display: &str, content: &str) -> Re
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Error: cannot create parent directory: {e}"))?;
     }
-    std::fs::write(&target.path, content)
-        .map_err(|e| format!("Error: cannot write {display}: {e}"))
+    std::fs::write(&target.path, content).map_err(|e| format!("Error: cannot write {display}: {e}"))
 }
 
 /// Added/removed line counts between two file contents, trimming the common
@@ -444,9 +450,7 @@ fn changed_middle<'a, 'b>(
 ) -> (&'b [&'a str], &'b [&'a str]) {
     // Trim the common prefix and suffix; whatever remains changed.
     let mut start = 0;
-    while start < old_lines.len()
-        && start < new_lines.len()
-        && old_lines[start] == new_lines[start]
+    while start < old_lines.len() && start < new_lines.len() && old_lines[start] == new_lines[start]
     {
         start += 1;
     }
@@ -468,7 +472,10 @@ fn change_summary(previous: Option<&str>, content: &str) -> (String, Vec<String>
     let new_lines: Vec<&str> = content.lines().collect();
 
     let Some(previous) = previous else {
-        return (format!("initial version ({} line(s))", new_lines.len()), Vec::new());
+        return (
+            format!("initial version ({} line(s))", new_lines.len()),
+            Vec::new(),
+        );
     };
 
     let old_lines: Vec<&str> = previous.lines().collect();
@@ -481,7 +488,10 @@ fn change_summary(previous: Option<&str>, content: &str) -> (String, Vec<String>
     for line in added.iter().take(2) {
         excerpt.push(format!("+ {}", truncate(line)));
     }
-    (format!("+{} -{} lines", added.len(), removed.len()), excerpt)
+    (
+        format!("+{} -{} lines", added.len(), removed.len()),
+        excerpt,
+    )
 }
 
 /// A line shortened for a history excerpt.
@@ -496,8 +506,7 @@ fn truncate(line: &str) -> String {
 
 fn read_target_file(root: &Path, display: &str, target: &paths::Target) -> Result<String, String> {
     let _ = root;
-    let meta = std::fs::symlink_metadata(&target.path)
-        .map_err(|_| missing(display))?;
+    let meta = std::fs::symlink_metadata(&target.path).map_err(|_| missing(display))?;
     if meta.is_dir() {
         return Err(format!("Error: The path {display} is a directory"));
     }
@@ -641,7 +650,10 @@ mod tests {
         let mut range_args = args("view", "/memories/notes.txt");
         range_args.view_range = Some([5, -1]);
         let out = run(&root, &range_args).unwrap();
-        assert!(out.contains("5\tfive") || out.contains("     5\tfive"), "{out}");
+        assert!(
+            out.contains("5\tfive") || out.contains("     5\tfive"),
+            "{out}"
+        );
         assert!(!out.contains("one"), "{out}");
 
         let mut range_args = args("view", "/memories/notes.txt");
@@ -670,7 +682,10 @@ mod tests {
         fs::create_dir_all(root.join("empty")).unwrap();
 
         let out = run(&root, &args("view", "/memories")).unwrap();
-        assert!(out.contains("2\ta.txt") || out.contains("2\t a.txt"), "{out}");
+        assert!(
+            out.contains("2\ta.txt") || out.contains("2\t a.txt"),
+            "{out}"
+        );
         assert!(out.contains("projects/"), "{out}");
         assert!(out.contains("projects/alpha/notes.txt"), "{out}");
         assert!(out.contains("1\tprojects/alpha/notes.txt"), "{out}");
@@ -746,7 +761,10 @@ mod tests {
         let err = run(&root, &replace_args).unwrap_err();
         assert!(err.contains("2"), "{err}");
         assert!(err.contains("unique") || err.contains("context"), "{err}");
-        assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "blue\nblue\n");
+        assert_eq!(
+            fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "blue\nblue\n"
+        );
     }
 
     #[test]
@@ -854,7 +872,10 @@ mod tests {
 
         let err = run(&root, &insert_args).unwrap_err();
         assert!(err.contains("[0, 2]"), "{err}");
-        assert_eq!(fs::read_to_string(root.join("todo.txt")).unwrap(), "first\nsecond\n");
+        assert_eq!(
+            fs::read_to_string(root.join("todo.txt")).unwrap(),
+            "first\nsecond\n"
+        );
     }
 
     // --- 3.5: delete and rename ---
@@ -873,7 +894,10 @@ mod tests {
     fn delete_missing_path_fails_naming_path() {
         let root = setup("delete-missing");
         let err = run(&root, &args("delete", "/memories/gone.txt")).unwrap_err();
-        assert!(err.contains("/memories/gone.txt") || err.contains("gone.txt"), "{err}");
+        assert!(
+            err.contains("/memories/gone.txt") || err.contains("gone.txt"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -918,8 +942,14 @@ mod tests {
 
         let err = run(&root, &rename_args).unwrap_err();
         assert!(err.contains("already exists"), "{err}");
-        assert_eq!(fs::read_to_string(root.join("draft.txt")).unwrap(), "draft\n");
-        assert_eq!(fs::read_to_string(root.join("final.txt")).unwrap(), "final\n");
+        assert_eq!(
+            fs::read_to_string(root.join("draft.txt")).unwrap(),
+            "draft\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("final.txt")).unwrap(),
+            "final\n"
+        );
     }
 
     // --- 3.6: per-command validation and unknown commands ---
@@ -936,7 +966,10 @@ mod tests {
         let root = setup("validate-replace");
         with_file(&root, "notes.txt", "x\n");
         let err = run(&root, &args("str_replace", "/memories/notes.txt")).unwrap_err();
-        assert!(err.contains("old_str") && err.contains("str_replace"), "{err}");
+        assert!(
+            err.contains("old_str") && err.contains("str_replace"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -991,7 +1024,11 @@ mod tests {
         create_args.file_text = Some("clobber".to_string());
         let err = run(&root, &create_args).unwrap_err();
         assert!(err.contains("outside the memory root"), "{err}");
-        assert!(!crate::versions::store_dir(&root).join("notes.jsonl").exists());
+        assert!(
+            !crate::versions::store_dir(&root)
+                .join("notes.jsonl")
+                .exists()
+        );
     }
 
     // --- 2.1: mutations append version records ---
@@ -1233,7 +1270,10 @@ mod tests {
         let err = run(&root, &restore_args).unwrap_err();
         assert!(err.contains("no version 9"), "{err}");
         assert!(err.contains("1..=1"), "{err}");
-        assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "first\n");
+        assert_eq!(
+            fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "first\n"
+        );
     }
 
     #[test]
@@ -1294,7 +1334,10 @@ mod tests {
         let v2 = out.find("v2").expect("v2 entry");
         let v3 = out.find("v3").expect("v3 entry");
         assert!(v1 < v2 && v2 < v3, "oldest first: {out}");
-        assert!(out.contains("create") && out.contains("str_replace") && out.contains("insert"), "{out}");
+        assert!(
+            out.contains("create") && out.contains("str_replace") && out.contains("insert"),
+            "{out}"
+        );
 
         // view at version 1: the recorded content, not the live file
         let mut view_args = args("view", "/memories/notes.txt");
@@ -1307,7 +1350,10 @@ mod tests {
         let mut restore_args = args("restore", "/memories/notes.txt");
         restore_args.version = Some(1);
         run(&root, &restore_args).unwrap();
-        assert_eq!(fs::read_to_string(root.join("notes.txt")).unwrap(), "first\n");
+        assert_eq!(
+            fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "first\n"
+        );
 
         // history again: the restore is recorded, nothing rewritten
         let out = run(&root, &args("history", "/memories/notes.txt")).unwrap();

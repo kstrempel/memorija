@@ -27,8 +27,7 @@ pub fn root_in(home: &Path) -> PathBuf {
 
 /// The memory root in the current user's home directory.
 pub fn resolve() -> std::io::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .ok_or_else(|| std::io::Error::other("HOME is not set"))?;
+    let home = std::env::var_os("HOME").ok_or_else(|| std::io::Error::other("HOME is not set"))?;
     Ok(root_in(Path::new(&home)))
 }
 
@@ -80,7 +79,10 @@ mod tests {
         ensure(&root).unwrap();
         assert!(root.is_dir());
         let seed = fs::read_to_string(root.join(SEED_FILENAME)).unwrap();
-        assert!(seed.contains("persistent memory"), "seed should give usage guidance");
+        assert!(
+            seed.contains("persistent memory"),
+            "seed should give usage guidance"
+        );
     }
 
     #[test]
@@ -96,7 +98,13 @@ mod tests {
 
         ensure(&root).unwrap();
 
-        assert_eq!(fs::read_to_string(root.join(SEED_FILENAME)).unwrap(), "my own memory");
-        assert_eq!(fs::read_to_string(root.join("projects/notes.txt")).unwrap(), "kept");
+        assert_eq!(
+            fs::read_to_string(root.join(SEED_FILENAME)).unwrap(),
+            "my own memory"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("projects/notes.txt")).unwrap(),
+            "kept"
+        );
     }
 }

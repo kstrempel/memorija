@@ -56,7 +56,14 @@ fn temp_home(label: &str) -> PathBuf {
 
 fn spawn_http_server(home: &Path, port: u16) -> Child {
     Command::new(env!("CARGO_BIN_EXE_memorija"))
-        .args(["serve", "--http", "--host", "127.0.0.1", "--port", &port.to_string()])
+        .args([
+            "serve",
+            "--http",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
         .env("HOME", home)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -92,33 +99,44 @@ async fn http_client_sees_stdio_identical_memory_tool() {
     wait_for_port(port);
 
     let url = format!("http://127.0.0.1:{port}/mcp");
-    let client = ()
-        .serve(StreamableHttpClientTransport::from_uri(url))
-        .await
-        .expect("client initialize over HTTP");
+    let client =
+        ().serve(StreamableHttpClientTransport::from_uri(url))
+            .await
+            .expect("client initialize over HTTP");
 
     // Tool listing: exactly `memory`, with the stdio-identical schema.
-    let listed = client.list_tools(Default::default()).await.expect("list tools");
+    let listed = client
+        .list_tools(Default::default())
+        .await
+        .expect("list tools");
     assert_eq!(listed.tools.len(), 1, "exactly one tool over HTTP");
     let tool = &listed.tools[0];
     assert_eq!(tool.name, "memory");
     let schema = serde_json::to_value(&*tool.input_schema).unwrap();
     let expected: Value = serde_json::from_str(EXPECTED_SCHEMA).unwrap();
-    assert_eq!(schema, expected, "schema must match the stdio-published one");
+    assert_eq!(
+        schema, expected,
+        "schema must match the stdio-published one"
+    );
     assert!(
-        tool.description.as_deref().unwrap_or("").contains("Persistent memory files"),
+        tool.description
+            .as_deref()
+            .unwrap_or("")
+            .contains("Persistent memory files"),
         "description should be the shared `memory` tool description"
     );
 
     // A `view` call returns what stdio would for the same fresh-root state:
     // the root listing, which contains only the seeded MEMORY.md.
     let result = client
-        .call_tool(CallToolRequestParams::new("memory").with_arguments(
-            json!({"command": "view", "path": "/"})
-                .as_object()
-                .unwrap()
-                .clone(),
-        ))
+        .call_tool(
+            CallToolRequestParams::new("memory").with_arguments(
+                json!({"command": "view", "path": "/"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
         .await
         .expect("view call over HTTP");
     assert!(
@@ -134,7 +152,10 @@ async fn http_client_sees_stdio_identical_memory_tool() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("MEMORY.md"), "root listing names the seed: {text}");
+    assert!(
+        text.contains("MEMORY.md"),
+        "root listing names the seed: {text}"
+    );
 
     // First HTTP launch behaves like first stdio launch: root created + seeded.
     let seed = std::fs::read_to_string(home.join(".memorija/memories/MEMORY.md"))

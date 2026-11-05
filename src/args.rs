@@ -200,7 +200,11 @@ mod tests {
 
         let required = schema["required"].as_array().unwrap();
         let required: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
-        assert_eq!(required, ["command", "path"], "required must be exactly [command, path]");
+        assert_eq!(
+            required,
+            ["command", "path"],
+            "required must be exactly [command, path]"
+        );
 
         let command = &schema["properties"]["command"];
         let enum_values: Vec<&str> = command["enum"]
@@ -212,7 +216,13 @@ mod tests {
         assert_eq!(
             enum_values,
             [
-                "view", "create", "str_replace", "insert", "delete", "rename", "history",
+                "view",
+                "create",
+                "str_replace",
+                "insert",
+                "delete",
+                "rename",
+                "history",
                 "restore"
             ]
         );
@@ -228,7 +238,10 @@ mod tests {
             .map(String::as_str)
             .collect();
         reference_names.sort_unstable();
-        assert_eq!(names, reference_names, "property set must match the reference");
+        assert_eq!(
+            names, reference_names,
+            "property set must match the reference"
+        );
 
         for optional in [
             "file_text",
@@ -240,10 +253,7 @@ mod tests {
             "view_range",
             "version",
         ] {
-            assert!(
-                !required.contains(&optional),
-                "{optional} must be optional"
-            );
+            assert!(!required.contains(&optional), "{optional} must be optional");
         }
     }
 }

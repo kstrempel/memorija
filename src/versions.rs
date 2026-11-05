@@ -52,18 +52,32 @@ pub fn append(store: &Path, rel_path: &str, content: &str, cause: &str) -> Resul
         cause: cause.to_string(),
         recorded_at: now_utc(),
     };
-    std::fs::create_dir_all(store)
-        .map_err(|e| format!("Error: cannot create the version store {}: {e}", store.display()))?;
+    std::fs::create_dir_all(store).map_err(|e| {
+        format!(
+            "Error: cannot create the version store {}: {e}",
+            store.display()
+        )
+    })?;
     let mut out = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&file)
-        .map_err(|e| format!("Error: cannot write the version store {}: {e}", file.display()))?;
+        .map_err(|e| {
+            format!(
+                "Error: cannot write the version store {}: {e}",
+                file.display()
+            )
+        })?;
     serde_json::to_writer(&mut out, &record)
         .map_err(|e| format!("Error: cannot serialize the version record: {e}"))?;
     out.write_all(b"\n")
         .and_then(|_| out.flush())
-        .map_err(|e| format!("Error: cannot write the version store {}: {e}", file.display()))?;
+        .map_err(|e| {
+            format!(
+                "Error: cannot write the version store {}: {e}",
+                file.display()
+            )
+        })?;
     Ok(record)
 }
 
@@ -77,7 +91,7 @@ pub fn read(store: &Path, rel_path: &str) -> Result<Vec<Record>, String> {
             return Err(format!(
                 "Error: cannot read the version store {}: {e}",
                 file.display()
-            ))
+            ));
         }
     };
     raw.lines()
@@ -110,9 +124,7 @@ pub(crate) fn encode_key(rel_path: &str) -> String {
     let mut out = String::with_capacity(rel_path.len());
     for byte in rel_path.bytes() {
         match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' => {
-                out.push(byte as char)
-            }
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -151,7 +163,7 @@ fn latest_seq(file: &Path) -> Result<u64, String> {
             return Err(format!(
                 "Error: cannot read the version store {}: {e}",
                 file.display()
-            ))
+            ));
         }
     };
     match raw.lines().next_back() {
@@ -291,11 +303,27 @@ mod tests {
     #[test]
     fn decode_key_reverses_the_slash_escape() {
         assert_eq!(decode_key("a%2Fb.txt"), "a/b.txt");
-        assert_eq!(decode_key("a%252Fb.txt"), "a%2Fb.txt", "a literal %2F in a path is double-escaped");
-        assert_eq!(decode_key("plain.txt"), "plain.txt", "unencoded names pass through");
+        assert_eq!(
+            decode_key("a%252Fb.txt"),
+            "a%2Fb.txt",
+            "a literal %2F in a path is double-escaped"
+        );
+        assert_eq!(
+            decode_key("plain.txt"),
+            "plain.txt",
+            "unencoded names pass through"
+        );
         assert_eq!(decode_key("a%20b.md"), "a b.md", "spaces are decoded");
-        assert_eq!(decode_key("%C3%BCnicode.md"), "ünicode.md", "multi-byte UTF-8 reassembles");
-        assert_eq!(decode_key("broken%ZZ"), "broken%ZZ", "invalid escapes pass through");
+        assert_eq!(
+            decode_key("%C3%BCnicode.md"),
+            "ünicode.md",
+            "multi-byte UTF-8 reassembles"
+        );
+        assert_eq!(
+            decode_key("broken%ZZ"),
+            "broken%ZZ",
+            "invalid escapes pass through"
+        );
     }
 
     #[test]
@@ -308,7 +336,11 @@ mod tests {
             "sp ace.txt",
             "…ellipsis",
         ] {
-            assert_eq!(decode_key(&encode_key(path)), path, "round trip of {path:?}");
+            assert_eq!(
+                decode_key(&encode_key(path)),
+                path,
+                "round trip of {path:?}"
+            );
         }
     }
 }

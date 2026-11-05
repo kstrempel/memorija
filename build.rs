@@ -13,11 +13,13 @@ fn main() {
         .and_then(|value| value.parse::<u64>().ok())
     {
         Some(epoch) => epoch / 86_400,
-        None => SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before the Unix epoch")
-            .as_secs()
-            / 86_400,
+        None => {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock before the Unix epoch")
+                .as_secs()
+                / 86_400
+        }
     };
     let (year, month, day) = civil_from_days(days as i64);
     println!("cargo:rustc-env=BUILD_DATE={year:04}-{month:02}-{day:02}");

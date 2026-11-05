@@ -21,9 +21,12 @@ pub struct Target {
 /// `..` traversal or a symlink that resolves outside — is refused with an
 /// error message naming the rule.
 pub fn resolve(root: &Path, input: &str) -> Result<Target, String> {
-    let root_canon = root
-        .canonicalize()
-        .map_err(|e| format!("Error: the memory root {} is not accessible: {e}", root.display()))?;
+    let root_canon = root.canonicalize().map_err(|e| {
+        format!(
+            "Error: the memory root {} is not accessible: {e}",
+            root.display()
+        )
+    })?;
 
     let rel = strip_memories_prefix(input);
     if rel.is_empty() {
@@ -68,9 +71,8 @@ pub fn resolve(root: &Path, input: &str) -> Result<Target, String> {
         }
         match std::fs::symlink_metadata(&next) {
             Ok(meta) if meta.file_type().is_symlink() => {
-                let target = std::fs::canonicalize(&next).map_err(|e| {
-                    format!("Error: cannot resolve the path `{input}`: {e}")
-                })?;
+                let target = std::fs::canonicalize(&next)
+                    .map_err(|e| format!("Error: cannot resolve the path `{input}`: {e}"))?;
                 if !target.starts_with(&root_canon) {
                     return Err(format!(
                         "Error: the path `{input}` follows a symbolic link outside the memory root; paths must stay within `/memories`"
@@ -165,7 +167,10 @@ mod tests {
         let root = temp_root("prefix-segment");
         // `/memories2` is an ordinary name, not the prefix.
         let target = resolve(&root, "/memories2/notes.txt").unwrap();
-        assert_eq!(target.path, root.canonicalize().unwrap().join("memories2/notes.txt"));
+        assert_eq!(
+            target.path,
+            root.canonicalize().unwrap().join("memories2/notes.txt")
+        );
     }
 
     #[test]
@@ -178,7 +183,10 @@ mod tests {
             "sub/../../escape.txt",
         ] {
             let err = resolve(&root, input).unwrap_err();
-            assert!(err.contains("outside the memory root"), "input {input:?}: {err}");
+            assert!(
+                err.contains("outside the memory root"),
+                "input {input:?}: {err}"
+            );
         }
     }
 
@@ -193,7 +201,10 @@ mod tests {
     fn not_yet_existing_paths_resolve_lexically() {
         let root = temp_root("missing");
         let target = resolve(&root, "/memories/newdir/newfile.txt").unwrap();
-        assert_eq!(target.path, root.canonicalize().unwrap().join("newdir/newfile.txt"));
+        assert_eq!(
+            target.path,
+            root.canonicalize().unwrap().join("newdir/newfile.txt")
+        );
         assert!(!target.is_root);
     }
 }

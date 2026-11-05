@@ -8,10 +8,8 @@ use crate::Memorija;
 use crate::cli::Transport;
 use crate::root;
 use rmcp::ServiceExt;
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
 pub async fn run_server(transport: Transport) -> Result<(), Box<dyn std::error::Error>> {
     let root = root::resolve()?;
@@ -42,7 +40,10 @@ pub async fn run_server(transport: Transport) -> Result<(), Box<dyn std::error::
                     eprintln!("Error: cannot bind {address}: {error}");
                     std::process::exit(1);
                 });
-            eprintln!("memorija: serving MCP over Streamable HTTP at http://{}:{port}/mcp", display_host(host));
+            eprintln!(
+                "memorija: serving MCP over Streamable HTTP at http://{}:{port}/mcp",
+                display_host(host)
+            );
             axum::serve(listener, app).await?;
             eprintln!("memorija: HTTP server stopped");
             Ok(())

@@ -55,7 +55,10 @@ impl Client {
                 .stdout
                 .read_line(&mut line)
                 .expect("read response line");
-            assert!(read > 0, "server closed stdout before responding to {method}");
+            assert!(
+                read > 0,
+                "server closed stdout before responding to {method}"
+            );
             let message: Value = serde_json::from_str(&line).expect("parse JSON-RPC message");
             if message.get("id").and_then(Value::as_i64) == Some(id) {
                 return message;
@@ -123,7 +126,11 @@ fn full_session_over_stdio() {
         response["result"]["serverInfo"].is_object(),
         "initialize must answer: {response}"
     );
-    writeln!(client.stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(
+        client.stdin,
+        r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
+    )
+    .unwrap();
     client.stdin.flush().unwrap();
 
     // 2. Exactly one tool, `memory`, with the pinned input schema.
@@ -132,12 +139,18 @@ fn full_session_over_stdio() {
     assert_eq!(tools.len(), 1, "exactly one tool: {response}");
     assert_eq!(tools[0]["name"], "memory");
     let description = tools[0]["description"].as_str().unwrap();
-    assert!(description.to_lowercase().contains("persistent memory"), "{description}");
+    assert!(
+        description.to_lowercase().contains("persistent memory"),
+        "{description}"
+    );
     // Versioning guidance (spec: tool description documents versioning).
     assert!(description.contains("history"), "{description}");
     assert!(description.contains("restore"), "{description}");
     assert!(description.contains("version"), "{description}");
-    assert_eq!(tools[0]["inputSchema"]["required"], json!(["command", "path"]));
+    assert_eq!(
+        tools[0]["inputSchema"]["required"],
+        json!(["command", "path"])
+    );
     let command_enum: Vec<&str> = tools[0]["inputSchema"]["properties"]["command"]["enum"]
         .as_array()
         .unwrap()
@@ -146,7 +159,16 @@ fn full_session_over_stdio() {
         .collect();
     assert_eq!(
         command_enum,
-        ["view", "create", "str_replace", "insert", "delete", "rename", "history", "restore"]
+        [
+            "view",
+            "create",
+            "str_replace",
+            "insert",
+            "delete",
+            "rename",
+            "history",
+            "restore"
+        ]
     );
     assert!(tools[0]["inputSchema"]["properties"]["version"].is_object());
 
@@ -201,9 +223,11 @@ fn full_session_over_stdio() {
         "insert_text": "top line\n"
     }));
     assert!(!error, "{text}");
-    assert!(std::fs::read_to_string(home.join(".memorija/memories/demo/hello.txt"))
-        .unwrap()
-        .starts_with("top line\n"));
+    assert!(
+        std::fs::read_to_string(home.join(".memorija/memories/demo/hello.txt"))
+            .unwrap()
+            .starts_with("top line\n")
+    );
 
     // 6b. Versioning: the three mutations are recorded; history shows them;
     //     view at a version reads the past; restore reverts and records.
@@ -252,7 +276,10 @@ fn full_session_over_stdio() {
     }));
     assert!(!error, "{text}");
     assert!(!home.join(".memorija/memories/demo/hello.txt").exists());
-    assert!(home.join(".memorija/memories/demo/archive/hello-renamed.txt").exists());
+    assert!(
+        home.join(".memorija/memories/demo/archive/hello-renamed.txt")
+            .exists()
+    );
 
     // 8. Delete the renamed file, then the demo directory.
     let (error, text) = client.memory(json!({
@@ -260,7 +287,11 @@ fn full_session_over_stdio() {
         "path": "/memories/demo/archive/hello-renamed.txt"
     }));
     assert!(!error, "{text}");
-    assert!(!home.join(".memorija/memories/demo/archive/hello-renamed.txt").exists());
+    assert!(
+        !home
+            .join(".memorija/memories/demo/archive/hello-renamed.txt")
+            .exists()
+    );
 
     let (error, text) = client.memory(json!({
         "command": "delete",
