@@ -133,7 +133,22 @@ fn full_session_over_stdio() {
     assert_eq!(tools[0]["name"], "memory");
     let description = tools[0]["description"].as_str().unwrap();
     assert!(description.to_lowercase().contains("persistent memory"), "{description}");
+    // Versioning guidance (spec: tool description documents versioning).
+    assert!(description.contains("history"), "{description}");
+    assert!(description.contains("restore"), "{description}");
+    assert!(description.contains("version"), "{description}");
     assert_eq!(tools[0]["inputSchema"]["required"], json!(["command", "path"]));
+    let command_enum: Vec<&str> = tools[0]["inputSchema"]["properties"]["command"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        command_enum,
+        ["view", "create", "str_replace", "insert", "delete", "rename", "history", "restore"]
+    );
+    assert!(tools[0]["inputSchema"]["properties"]["version"].is_object());
 
     // 3. Create a memory file in a nested directory.
     let (error, text) = client.memory(json!({
@@ -189,6 +204,45 @@ fn full_session_over_stdio() {
     assert!(std::fs::read_to_string(home.join(".memorija/memories/demo/hello.txt"))
         .unwrap()
         .starts_with("top line\n"));
+
+    // 6b. Versioning: the three mutations are recorded; history shows them;
+    //     view at a version reads the past; restore reverts and records.
+    let (error, text) = client.memory(json!({
+        "command": "history",
+        "path": "/memories/demo/hello.txt"
+    }));
+    assert!(!error, "{text}");
+    assert!(text.contains("v1") && text.contains("v3"), "{text}");
+
+    let (error, text) = client.memory(json!({
+        "command": "view",
+        "path": "/memories/demo/hello.txt",
+        "version": 2
+    }));
+    assert!(!error, "{text}");
+    assert!(text.contains("first line"), "{text}");
+    assert!(text.contains("second line, edited"), "{text}");
+    assert!(!text.contains("top line"), "{text}");
+
+    let (error, text) = client.memory(json!({
+        "command": "restore",
+        "path": "/memories/demo/hello.txt",
+        "version": 2
+    }));
+    assert!(!error, "{text}");
+    let content = std::fs::read_to_string(home.join(".memorija/memories/demo/hello.txt")).unwrap();
+    assert!(content.contains("second line, edited"), "{content}");
+    assert!(!content.starts_with("top line\n"), "{content}");
+
+    let (error, text) = client.memory(json!({
+        "command": "history",
+        "path": "/memories/demo/hello.txt"
+    }));
+    assert!(!error, "{text}");
+    assert!(text.contains("v4") && text.contains("restore"), "{text}");
+
+    // The version store lives beside the memory root, out of the tree.
+    assert!(home.join(".memorija/versions").is_dir());
 
     // 7. Rename (with a new parent directory).
     let (error, text) = client.memory(json!({

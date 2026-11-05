@@ -6,6 +6,7 @@ mod root;
 mod serve;
 #[cfg(test)]
 mod testutil;
+mod versions;
 
 use args::MemoryArgs;
 use rmcp::{
@@ -46,7 +47,13 @@ end `-1` means through the end of the file) or recursively lists a directory; `c
 or overwrites a file (`file_text`); `str_replace` replaces a unique `old_str` with `new_str` \
 (omit `new_str` to delete the matched text); `insert` adds `insert_text` after line \
 `insert_line` (0 = top of file); `delete` removes a file or directory recursively; `rename` \
-moves the target to `new_path`. Recoverable failures are reported as error results you can \
+moves the target to `new_path`. \
+VERSIONS - Every change to a memory file (`create`, `str_replace`, `insert`, `restore`) is \
+recorded as a numbered version. `history` shows a file's change timeline (version, time, \
+cause, change summary). `view` with `version: N` reads the file's past content as of \
+version N. `restore` with `version: N` reverts the file to a past version by recording \
+a new version — history is never rewritten, so a restore is itself undoable. \
+Recoverable failures are reported as error results you can \
 retry with corrected arguments.")]
     async fn memory(
         &self,

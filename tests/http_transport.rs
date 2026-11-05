@@ -18,8 +18,8 @@ const EXPECTED_SCHEMA: &str = r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "command": {
-      "description": "The six memory commands, serialized as Anthropic's string enum.",
-      "enum": ["view", "create", "str_replace", "insert", "delete", "rename"],
+      "description": "The eight memory commands, serialized as Anthropic's string enum.",
+      "enum": ["view", "create", "str_replace", "insert", "delete", "rename", "history", "restore"],
       "type": "string"
     },
     "file_text": {"type": ["string", "null"]},
@@ -29,6 +29,7 @@ const EXPECTED_SCHEMA: &str = r#"{
     "new_str": {"type": ["string", "null"]},
     "old_str": {"type": ["string", "null"]},
     "path": {"type": "string"},
+    "version": {"description": "A past version number, honored by `view` and required by `restore`.", "format": "int64", "type": ["integer", "null"]},
     "view_range": {
       "items": {"format": "int64", "type": "integer"},
       "maxItems": 2,

@@ -5,19 +5,22 @@ markdown and text files under `~/.memorija/memories`, exposed through a single
 `memory` tool.
 
 memorija implements Anthropic's [memory tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/memory-tool)
-interface (`memory_20250818`): one tool with six file commands, designed so the
+interface (`memory_20250818`): one tool with eight file commands, designed so the
 model manages its own memory without extra prompting logic on your side. The
 memory is just files, so it stays readable, greppable, versionable, and safe to
 back up or edit by hand.
 
 ## Features
 
-- **Single `memory` tool** with the six commands `view`, `create`,
-  `str_replace`, `insert`, `delete`, and `rename`, matching Anthropic's
-  reference schema.
+- **Single `memory` tool** with the eight commands `view`, `create`,
+  `str_replace`, `insert`, `delete`, `rename`, `history`, and `restore`, an
+  additive extension of Anthropic's reference schema.
 - **Files as storage** — the memory root is `~/.memorija/memories`, created and
   seeded with a `MEMORY.md` on first launch. An existing root is never
   overwritten.
+- **Versioned edits** — every change to a memory file is recorded, with
+  `history`, `view` at a past version, and `restore` to undo any change
+  (see [Versioning](#versioning)).
 - **Sandboxed paths** — every path is resolved inside the memory root;
   `..` traversal and symlinks that lead outside are refused.
 - **Two transports** — stdio for locally launched clients, Streamable HTTP for
@@ -69,7 +72,7 @@ memorija serve [--stdio | --http] [--host <address>] [--port <number>]
 memorija help [command]
 ```
 
-- `--version` — print the tool name, version, and build date (e.g. `memorija 0.1.0 (built 2026-11-04)`), then exit without starting the server
+- `--version` — print the tool name, version, and build date (e.g. `memorija 0.1.1 (built 2026-11-05)`), then exit without starting the server
 - `--stdio` — serve over stdio (default; also the bare-invocation default)
 - `--http` — serve over Streamable HTTP (default port 8080, default host `127.0.0.1`)
 - `--host` / `--port` only apply to `--http`; mixing them with `--stdio` is a usage error
@@ -83,12 +86,36 @@ and optional.
 
 | Command       | Required fields | Effect |
 |---------------|-----------------|--------|
-| `view`        | `path`          | List a directory (recursively, with line counts) or read a file, optionally limited by `view_range` |
-| `create`      | `path`, `file_text` | Create a new file (fails if it exists) |
-| `str_replace` | `path`, `old_str`, `new_str` | Replace a unique occurrence |
+| `view`        | `path`          | List a directory (recursively, with line counts) or read a file, optionally limited by `view_range`; with `version`, read a past version instead |
+| `create`      | `path`, `file_text` | Write or overwrite a file (missing parent directories are created) |
+| `str_replace` | `path`, `old_str`, `new_str` | Replace a unique occurrence (omit `new_str` to delete the matched text) |
 | `insert`      | `path`, `insert_line`, `insert_text` | Insert text after a line number (0 prepends) |
 | `delete`      | `path`          | Delete a file or directory |
 | `rename`      | `path`, `new_path` | Move or rename |
+| `history`     | `path`          | Show a file's version timeline |
+| `restore`     | `path`, `version` | Revert a file to a past version by recording a new one |
+
+## Versioning
+
+Every change to a memory file (`create`, `str_replace`, `insert`, and
+`restore` itself) appends an immutable version record capturing the path, the
+full resulting content, the causing command, and a timestamp. Records live in
+a store beside the memory root, `~/.memorija/versions/` — never inside the
+visible memory tree, so listings and containment rules are unaffected. The
+store is JSON Lines, one version per line per path, retained even after the
+file is deleted or renamed.
+
+- **`history`** returns a file's timeline, oldest first: version number,
+  timestamp, cause (`create`, `str_replace`, `insert`, or `restore`), and a
+  compact change summary against the previous version.
+- **`view`** with `version: N` reads the file's content as of version N, with
+  true line numbers; unknown versions name the available range.
+- **`restore`** with `version: N` reverts the file to version N's content by
+  recording a new version — history is append-only and never rewritten, so a
+  restore is itself undoable.
+
+Undoing a deletion of the file itself is not covered yet: `restore` requires
+the file to exist.
 
 ## Development
 

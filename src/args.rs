@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use rmcp::schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 
-/// The six memory commands, serialized as Anthropic's string enum.
+/// The eight memory commands, serialized as Anthropic's string enum.
 #[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
@@ -13,16 +13,20 @@ pub enum Command {
     Insert,
     Delete,
     Rename,
+    History,
+    Restore,
 }
 
 impl Command {
-    pub const ALL: [Command; 6] = [
+    pub const ALL: [Command; 8] = [
         Command::View,
         Command::Create,
         Command::StrReplace,
         Command::Insert,
         Command::Delete,
         Command::Rename,
+        Command::History,
+        Command::Restore,
     ];
 
     /// `"str_replace"` style name, as used in the tool schema and error messages.
@@ -34,14 +38,16 @@ impl Command {
             Command::Insert => "insert",
             Command::Delete => "delete",
             Command::Rename => "rename",
+            Command::History => "history",
+            Command::Restore => "restore",
         }
     }
 }
 
-/// The `command` field as supplied by the model: one of the six supported
+/// The `command` field as supplied by the model: one of the eight supported
 /// commands, or an unrecognized string.
 ///
-/// The JSON schema advertises only the six-value enum (it delegates to
+/// The JSON schema advertises only the eight-value enum (it delegates to
 /// [`Command`]); unrecognized values are surfaced to the dispatch layer as
 /// [`CommandArg::Unknown`] so they can be reported as tool-level error
 /// results rather than protocol errors.
@@ -60,6 +66,8 @@ enum KnownCommand {
     Insert,
     Delete,
     Rename,
+    History,
+    Restore,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +89,8 @@ impl<'de> Deserialize<'de> for CommandArg {
             CommandInput::Known(KnownCommand::Insert) => CommandArg::Known(Command::Insert),
             CommandInput::Known(KnownCommand::Delete) => CommandArg::Known(Command::Delete),
             CommandInput::Known(KnownCommand::Rename) => CommandArg::Known(Command::Rename),
+            CommandInput::Known(KnownCommand::History) => CommandArg::Known(Command::History),
+            CommandInput::Known(KnownCommand::Restore) => CommandArg::Known(Command::Restore),
             CommandInput::Unknown(value) => CommandArg::Unknown(value),
         })
     }
@@ -105,7 +115,7 @@ impl JsonSchema for CommandArg {
 }
 
 /// The unified `memory` tool input: the flat Anthropic interface with exactly
-/// two required fields (`command`, `path`) and seven optional per-command
+/// two required fields (`command`, `path`) and eight optional per-command
 /// fields.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 pub struct MemoryArgs {
@@ -118,6 +128,8 @@ pub struct MemoryArgs {
     pub insert_text: Option<String>,
     pub new_path: Option<String>,
     pub view_range: Option<[i64; 2]>,
+    /// A past version number, honored by `view` and required by `restore`.
+    pub version: Option<i64>,
 }
 
 #[cfg(test)]
@@ -127,16 +139,18 @@ mod tests {
     use serde_json::json;
 
     /// Structurally, Anthropic's reference schema for the `memory` tool
-    /// (memory_20250818, as implemented in the Anthropic SDK helpers):
-    /// an object with exactly these nine properties, `command` restricted to
-    /// the six-value string enum, `path` a string, the seven per-command
-    /// fields optional, and `required` exactly ["command", "path"].
+    /// (memory_20250818, as implemented in the Anthropic SDK helpers),
+    /// extended additively with the versioning commands: an object with
+    /// exactly these ten properties, `command` restricted to the eight-value
+    /// string enum, `path` a string, the eight per-command fields optional,
+    /// and `required` exactly ["command", "path"].
     fn reference() -> serde_json::Value {
         json!({
         "type": "object",
         "properties": {
             "command": { "type": "string", "enum": [
-                "view", "create", "str_replace", "insert", "delete", "rename"
+                "view", "create", "str_replace", "insert", "delete", "rename",
+                "history", "restore"
             ]},
             "path": { "type": "string" },
             "file_text": { "type": "string" },
@@ -145,7 +159,8 @@ mod tests {
             "insert_line": { "type": "integer" },
             "insert_text": { "type": "string" },
             "new_path": { "type": "string" },
-            "view_range": { "type": "array", "items": { "type": "integer" } }
+            "view_range": { "type": "array", "items": { "type": "integer" } },
+            "version": { "type": "integer" }
         },
         "required": ["command", "path"]
         })
@@ -153,6 +168,25 @@ mod tests {
 
     fn generated() -> serde_json::Value {
         serde_json::to_value(schema_for!(MemoryArgs)).unwrap()
+    }
+
+    /// The command enum lists all eight commands, in tool-schema order.
+    #[test]
+    fn command_enum_lists_all_eight_commands() {
+        let names: Vec<&str> = Command::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "view",
+                "create",
+                "str_replace",
+                "insert",
+                "delete",
+                "rename",
+                "history",
+                "restore"
+            ]
+        );
     }
 
     /// The schema diff recorded during implementation (design D2): the
@@ -177,7 +211,10 @@ mod tests {
             .collect();
         assert_eq!(
             enum_values,
-            ["view", "create", "str_replace", "insert", "delete", "rename"]
+            [
+                "view", "create", "str_replace", "insert", "delete", "rename", "history",
+                "restore"
+            ]
         );
 
         let properties = schema["properties"].as_object().unwrap();
@@ -201,6 +238,7 @@ mod tests {
             "insert_text",
             "new_path",
             "view_range",
+            "version",
         ] {
             assert!(
                 !required.contains(&optional),
