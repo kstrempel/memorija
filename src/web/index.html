@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memorija</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="site-header">
+  <h1>memorija</h1>
+  <nav class="screens" aria-label="Screens">
+    <a href="/" data-screen="changes">Changes</a>
+    <a href="/files" data-screen="files">Files</a>
+    <a href="/file" data-screen="file">Reader</a>
+  </nav>
+</header>
+<noscript>
+  <p class="notice">The memorija viewer needs JavaScript to show your memory files.</p>
+</noscript>
+<p id="notice" class="notice error" hidden></p>
+<main id="screen"></main>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -201,11 +201,13 @@ fn fresh_machine_shows_the_empty_state() {
     let (status, body) = http_get(port, "/api/changes");
     assert_eq!(status, 200, "{body}");
     assert_eq!(body, r#"{"changes":[]}"#, "an empty feed, not an error");
-    let (status, page) = http_get(port, "/");
+    // The empty-state text lives in the client script now that the page is
+    // split into assets (design D2).
+    let (status, script) = http_get(port, "/app.js");
     assert_eq!(status, 200);
     assert!(
-        page.contains("No changes recorded yet"),
-        "the page carries the empty-state message: {page}"
+        script.contains("No changes recorded yet"),
+        "the client carries the empty-state message: {script}"
     );
 
     viewer.0.kill().unwrap();

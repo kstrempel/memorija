@@ -23,8 +23,9 @@ back up or edit by hand.
   (see [Versioning](#versioning)).
 - **Sandboxed paths** — every path is resolved inside the memory root;
   `..` traversal and symlinks that lead outside are refused.
-- **Web viewer** — `memorija web` opens a local, read-only page of your
-  memory: a live changes feed and rendered files, updating on their own.
+- **Web viewer** — `memorija web` opens a local, read-only viewer with three
+  screens: a live Changes feed, a Files index with per-file metadata, and a
+  Reader that can show any recorded version. It updates itself.
 - **Two transports** — stdio for locally launched clients, Streamable HTTP for
   shared or remote connections.
 - **Tool-level errors** — recoverable failures come back as `isError` results
@@ -108,19 +109,37 @@ on startup when binding to a non-loopback address. Defaults: port `8081`
 The viewer offers no way to modify memories — it only reads the memory root
 and the version store, and never creates or seeds either.
 
-- The **changes feed** (top of the page) lists every recorded change newest
-  first: time, file path, cause, and a `+N -M` line-count summary. A fresh
-  machine with no recorded changes shows an empty-state message.
-- Below the feed, the **most recently changed file** is rendered from
-  markdown as HTML. Clicking a feed row shows that file instead, at its own
-  address (`/?path=<file>`), so reloading or bookmarking returns to it.
-- The page **updates on its own**: the server polls the version store every
-  second and pushes new changes over Server-Sent Events — no manual reload.
-- Requesting a path that does not exist shows a clear not-found message;
-  paths that escape the memory root (by `..` traversal or a symlink pointing
-  outside) are refused, exactly as in the CLI and MCP surfaces. Rendered
-  markdown never executes scripts: HTML inside a memory file displays as
-  text.
+The header navigates three screens, each at its own address:
+
+- **Changes** (`/`) lists recorded changes newest first, grouped by day: time,
+  file path, cause, `+N -M`, and the version. Filter by timespan (`24h`
+  default, `7d`, `all`) and by path; both are carried in the address, so a
+  reload or bookmark keeps them. Selecting a change opens the Reader at that
+  recorded version.
+- **Files** (`/files?q=`) lists every memory file in the memory root, grouped
+  by directory in path order, with its line count, latest version, and last
+  change time; files without recorded changes appear too. Selecting one opens
+  the Reader at its latest version.
+- **Reader** (`/file?path=<file>&version=<n>&from=changes|files`) renders the
+  file from markdown and offers its recorded versions as a strip; a past
+  version is marked as historical with a return to the latest. Without
+  `version`, the current content is shown. Files with no recorded versions
+  show just their content.
+
+Old `/?path=<file>` bookmarks still resolve to the same Reader view. An
+unknown address shows a not-found screen with a way back.
+
+The viewer **updates on its own**: the server polls the version store and
+the memory root's top level every second and pushes the feed and file list
+over Server-Sent Events to whichever screen is open. The Changes screen shows
+an "N new changes" indicator when you are scrolled away from the top, and the
+Reader offers an "updated — view vN" link instead of replacing the content
+you are reading.
+
+Requesting a path that does not exist shows a clear not-found screen; paths
+that escape the memory root (by `..` traversal or a symlink pointing outside)
+are refused, exactly as in the CLI and MCP surfaces. Rendered markdown never
+executes scripts: HTML inside a memory file displays as text.
 
 ## The memory tool
 
@@ -166,6 +185,11 @@ the file to exist.
 cargo build
 cargo test
 ```
+
+The web viewer ships no front-end build step: `src/web/index.html`,
+`app.css`, and `app.js` are embedded in the binary, served from the same
+origin with `Cache-Control: no-cache`, and constrained by a strict CSP
+(`'self'` for scripts, styles, and connections — no inline code).
 
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.
