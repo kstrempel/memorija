@@ -54,6 +54,72 @@ function element(tag, className, text) {
   return node;
 }
 
+// ------------------------------------------------------------- appearance --
+
+// The appearance control (design D4, D5). theme.js already put the stored
+// choice on <html> before the body painted; this keeps the header marked and
+// records new choices. Choosing an appearance is a pure CSS change, so the
+// visible screen - its filters, its scroll position, the Reader's version - is
+// never rebuilt.
+var THEME_KEY = "memorija.theme";
+
+// The stored choice, or "system" when none was made (the key is absent) or the
+// store is unreadable.
+function storedTheme() {
+  try {
+    var value = window.localStorage.getItem(THEME_KEY);
+    return value === "light" || value === "dark" ? value : "system";
+  } catch (error) {
+    return "system";
+  }
+}
+
+function markAppearance(choice) {
+  var buttons = document.querySelectorAll("[data-theme-choice]");
+  for (var i = 0; i < buttons.length; i++) {
+    var pressed = buttons[i].dataset.themeChoice === choice;
+    buttons[i].setAttribute("aria-pressed", pressed ? "true" : "false");
+  }
+}
+
+// "system" removes the attribute, leaving the stylesheet's
+// prefers-color-scheme media query in charge.
+function applyAppearance(choice) {
+  if (choice === "light" || choice === "dark") {
+    document.documentElement.setAttribute("data-theme", choice);
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  markAppearance(choice);
+}
+
+// Persist the choice for later visits. A throwing or unavailable store must not
+// break the page (design D4): the appearance still applies until the next load.
+function storeAppearance(choice) {
+  try {
+    if (choice === "light" || choice === "dark") {
+      window.localStorage.setItem(THEME_KEY, choice);
+    } else {
+      window.localStorage.removeItem(THEME_KEY);
+    }
+  } catch (error) {
+    // Storage unavailable: the choice lasts for the current page only.
+  }
+}
+
+var appearanceControl = document.querySelector(".appearance");
+if (appearanceControl) {
+  appearanceControl.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-theme-choice]");
+    if (!button) {
+      return;
+    }
+    storeAppearance(button.dataset.themeChoice);
+    applyAppearance(button.dataset.themeChoice);
+  });
+  applyAppearance(storedTheme());
+}
+
 // ---------------------------------------------------------------- routing --
 
 // Translate an old `/?path=<file>` bookmark before the first render, without

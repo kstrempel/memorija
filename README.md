@@ -109,6 +109,14 @@ on startup when binding to a non-loopback address. Defaults: port `8081`
 The viewer offers no way to modify memories — it only reads the memory root
 and the version store, and never creates or seeds either.
 
+The viewer follows your system's light or dark appearance. The header also
+offers **Light**, **Dark**, and **System**: the explicit choice is remembered in
+the browser (a `localStorage` entry, scoped to the viewer's address, so a
+different port or host starts from the system preference again) and is never
+sent to the server. Choosing **System** returns to the operating system
+preference, and the open page follows it without a reload. Changing the
+appearance never touches a memory file or version record.
+
 The header navigates three screens, each at its own address:
 
 - **Changes** (`/`) lists recorded changes newest first, grouped by day: time,
@@ -187,9 +195,12 @@ cargo test
 ```
 
 The web viewer ships no front-end build step: `src/web/index.html`,
-`app.css`, and `app.js` are embedded in the binary, served from the same
-origin with `Cache-Control: no-cache`, and constrained by a strict CSP
-(`'self'` for scripts, styles, and connections — no inline code).
+`app.css`, `theme.js`, and `app.js` are embedded in the binary, served from the
+same origin with `Cache-Control: no-cache`, and constrained by a strict CSP
+(`'self'` for scripts, styles, and connections — no inline code). `theme.js` is
+a tiny parser-blocking bootstrap in `<head>`: it applies a stored appearance
+choice before the body paints, which is why it exists as its own asset instead
+of an inline script.
 
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.

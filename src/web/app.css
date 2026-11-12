@@ -1,10 +1,71 @@
+/* The appearance is a set of tokens. The light palette is declared once on
+   :root and repeated in `:root[data-theme="light"]`; the dark palette is
+   declared under the system preference and repeated in
+   `:root[data-theme="dark"]`. CSS cannot share a declaration block between a
+   media query and an attribute selector, so keep the two copies of each
+   palette in step (design D2). */
+
 :root {
+  color-scheme: light;
+  --surface: #fff;
+  --bg: #fafafa;
+  --raised: #fff;
+  --fg: #222;
   --border: #ddd;
   --muted: #777;
   --accent: #0b62d6;
-  --bg: #fafafa;
   --ok: #1a7f37;
   --bad: #cf222e;
+  --shadow: rgba(0, 0, 0, 0.12);
+}
+
+/* Follow the system preference while no explicit choice is stored: theme.js
+   removes `data-theme` for "System", so this block is the no-choice state. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --surface: #101216;
+    --bg: #171b21;
+    --raised: #1a1e24;
+    --fg: #dfe3e8;
+    --border: #2c3138;
+    --muted: #9aa3b0;
+    --accent: #6aa8ff;
+    --ok: #3fb950;
+    --bad: #f85149;
+    --shadow: rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Explicit choices from the header control, applied by theme.js before the
+   body paints (design D3) and by app.js on click. These copies repeat the
+   palettes above. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #101216;
+  --bg: #171b21;
+  --raised: #1a1e24;
+  --fg: #dfe3e8;
+  --border: #2c3138;
+  --muted: #9aa3b0;
+  --accent: #6aa8ff;
+  --ok: #3fb950;
+  --bad: #f85149;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface: #fff;
+  --bg: #fafafa;
+  --raised: #fff;
+  --fg: #222;
+  --border: #ddd;
+  --muted: #777;
+  --accent: #0b62d6;
+  --ok: #1a7f37;
+  --bad: #cf222e;
+  --shadow: rgba(0, 0, 0, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -14,8 +75,8 @@ body {
   margin: 0 auto;
   max-width: 52rem;
   padding: 1rem;
-  color: #222;
-  background: #fff;
+  color: var(--fg);
+  background: var(--surface);
 }
 
 .site-header {
@@ -29,8 +90,7 @@ body {
 
 .site-header h1 { font-size: 1.1rem; margin: 0; }
 
-.screens { display: flex; gap: 0.75rem; }
-.screens a {
+.screens { display: flex; gap: 0.75rem; }.screens a {
   color: var(--muted);
   text-decoration: none;
   font-size: 0.9rem;
@@ -41,6 +101,14 @@ body {
 .screens a[aria-current="page"] {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* The appearance control sits at the end of the header and wraps with it on
+   narrow screens; the chips reuse the Changes filter styling. */
+.appearance {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
 }
 
 h2 {
@@ -87,6 +155,8 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 6px;
   min-width: 12rem;
+  color: var(--fg);
+  background: var(--surface);
 }
 .chip {
   font: inherit;
@@ -94,7 +164,7 @@ h2 {
   padding: 0.2rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--raised);
   color: var(--muted);
   cursor: pointer;
   text-decoration: none;
@@ -116,10 +186,10 @@ h2 {
   padding: 0.4rem 0.9rem;
   border: 1px solid var(--accent);
   border-radius: 999px;
-  background: #fff;
+  background: var(--raised);
   color: var(--accent);
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 6px var(--shadow);
   z-index: 10;
 }
 
@@ -139,7 +209,7 @@ h2 {
   margin: 0.25rem 0 0;
   text-transform: none;
   letter-spacing: 0;
-  color: #222;
+  color: var(--fg);
   word-break: break-all;
 }
 

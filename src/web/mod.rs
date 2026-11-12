@@ -29,11 +29,13 @@ mod markdown;
 /// How often the version store is checked for movement (design D4).
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The embedded shell (design D2): one document, one stylesheet, one client
-/// script — no front-end build step.
+/// The embedded shell (design D2): one document, one stylesheet, two client
+/// scripts — no front-end build step. `theme.js` is the appearance bootstrap
+/// loaded from `<head>`, `app.js` the client router and screen renderers.
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_CSS: &str = include_str!("app.css");
 const APP_JS: &str = include_str!("app.js");
+const THEME_JS: &str = include_str!("theme.js");
 
 /// The viewer's Content-Security-Policy (design D2): only same-origin
 /// assets and connections, no inline script, style, or event handlers.
@@ -61,6 +63,7 @@ pub fn app(root: PathBuf) -> Router {
         .route("/file", get(shell))
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
+        .route("/theme.js", get(theme_js))
         .route("/api/changes", get(api_changes))
         .route("/api/files", get(api_files))
         .route("/api/file", get(api_file))
@@ -266,6 +269,12 @@ async fn app_css() -> axum::response::Response {
 /// `GET /app.js`: the embedded client script, served from the same origin.
 async fn app_js() -> axum::response::Response {
     asset_response(APP_JS, "text/javascript; charset=utf-8")
+}
+
+/// `GET /theme.js`: the embedded appearance bootstrap, served from the same
+/// origin so the strict CSP keeps working (design D3).
+async fn theme_js() -> axum::response::Response {
+    asset_response(THEME_JS, "text/javascript; charset=utf-8")
 }
 
 /// An embedded asset with its content type, and `no-cache` so a rebuilt
@@ -699,8 +708,19 @@ mod tests {
                 "{path} returns the document: {body}"
             );
             assert!(
-                body.contains("/app.css") && body.contains("/app.js"),
+                body.contains("/app.css")
+                    && body.contains("/app.js")
+                    && body.contains("/theme.js"),
                 "{path} references the split assets: {body}"
+            );
+            // The appearance control is part of the shared header on every
+            // screen, with all three choices served statically.
+            assert!(
+                body.contains(r#"aria-label="Appearance""#)
+                    && body.contains(r#"data-theme-choice="light""#)
+                    && body.contains(r#"data-theme-choice="dark""#)
+                    && body.contains(r#"data-theme-choice="system""#),
+                "{path} carries the appearance control: {body}"
             );
             let csp = header_value(&raw, "content-security-policy").expect("a CSP header");
             assert_eq!(
@@ -725,6 +745,7 @@ mod tests {
         for (path, content_type) in [
             ("/app.css", "text/css"),
             ("/app.js", "text/javascript"),
+            ("/theme.js", "text/javascript"),
         ] {
             let raw = raw_get(port, path);
             let (status, _, body) = split_response(&raw);
@@ -740,6 +761,22 @@ mod tests {
                 "{path} must not be cached across rebuilds"
             );
             assert!(!body.is_empty(), "{path} has content");
+        }
+
+        // The stylesheet carries both palettes: the system preference, and the
+        // explicit choices the header control sets on the root element
+        // (design D2).
+        let (status, css) = http_get(port, "/app.css");
+        assert_eq!(status, 200, "{css}");
+        for marker in [
+            "prefers-color-scheme: dark",
+            ":root:not([data-theme])",
+            ":root[data-theme=\"dark\"]",
+            ":root[data-theme=\"light\"]",
+            "color-scheme: dark",
+            "color-scheme: light",
+        ] {
+            assert!(css.contains(marker), "app.css carries `{marker}`: {css}");
         }
     }
 

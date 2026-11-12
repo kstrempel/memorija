@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>memorija</title>
 <link rel="stylesheet" href="/app.css">
+<script src="/theme.js"></script>
 </head>
 <body>
 <header class="site-header">
@@ -14,6 +15,11 @@
     <a href="/files" data-screen="files">Files</a>
     <a href="/file" data-screen="file">Reader</a>
   </nav>
+  <div class="appearance" role="group" aria-label="Appearance">
+    <button type="button" class="chip" data-theme-choice="light" aria-pressed="false">Light</button>
+    <button type="button" class="chip" data-theme-choice="dark" aria-pressed="false">Dark</button>
+    <button type="button" class="chip" data-theme-choice="system" aria-pressed="false">System</button>
+  </div>
 </header>
 <noscript>
   <p class="notice">The memorija viewer needs JavaScript to show your memory files.</p>
