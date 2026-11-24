@@ -26,9 +26,23 @@ pub fn root_in(home: &Path) -> PathBuf {
 }
 
 /// The memory root in the current user's home directory.
+///
+/// `HOME` is preferred because it is the location macOS and Linux define and
+/// the one tests point at a temporary directory; Windows normally defines only
+/// `USERPROFILE`, so it is the fallback (design D8).
 pub fn resolve() -> std::io::Result<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or_else(|| std::io::Error::other("HOME is not set"))?;
+    let home = home_from(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))?;
     Ok(root_in(Path::new(&home)))
+}
+
+/// Pick the home directory from the variables that can define it, preferring
+/// `HOME` so macOS and Linux are unaffected.
+fn home_from(
+    home: Option<std::ffi::OsString>,
+    user_profile: Option<std::ffi::OsString>,
+) -> std::io::Result<std::ffi::OsString> {
+    home.or(user_profile)
+        .ok_or_else(|| std::io::Error::other("neither HOME nor USERPROFILE is set"))
 }
 
 /// Create the memory root (and seed it) if it does not exist yet.
@@ -67,6 +81,31 @@ mod tests {
         assert_eq!(
             root_in(Path::new("/home/tester")),
             PathBuf::from("/home/tester/.memorija/memories")
+        );
+    }
+
+    #[test]
+    fn home_prefers_home_over_userprofile() {
+        assert_eq!(
+            home_from(Some("/home/tester".into()), Some("/users/tester".into())).unwrap(),
+            std::ffi::OsString::from("/home/tester")
+        );
+    }
+
+    #[test]
+    fn home_falls_back_to_userprofile() {
+        assert_eq!(
+            home_from(None, Some("/users/tester".into())).unwrap(),
+            std::ffi::OsString::from("/users/tester")
+        );
+    }
+
+    #[test]
+    fn missing_home_names_both_variables() {
+        let error = home_from(None, None).unwrap_err().to_string();
+        assert!(
+            error.contains("HOME") && error.contains("USERPROFILE"),
+            "error should name both variables: {error}"
         );
     }
 

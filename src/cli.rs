@@ -168,12 +168,12 @@ pub fn parse_command() -> Command {
         Ok(cli) => cli.command.unwrap_or(Command::Serve(ServeArgs::default())),
         Err(error) => error.exit(),
     };
-    if let Command::Serve(args) = &command {
-        if let Err(message) = args.validate() {
-            Cli::command()
-                .error(ErrorKind::ArgumentConflict, message)
-                .exit();
-        }
+    if let Command::Serve(args) = &command
+        && let Err(message) = args.validate()
+    {
+        Cli::command()
+            .error(ErrorKind::ArgumentConflict, message)
+            .exit();
     }
     command
 }

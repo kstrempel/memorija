@@ -56,7 +56,7 @@ fn list_output(root: &Path) -> Result<String, String> {
 fn list(root: &Path) -> Result<String, String> {
     let last_seqs = available_versions(root)?;
     let mut out = String::new();
-    for (line_count, relative) in crate::ops::walk(root, root, root)? {
+    for (line_count, relative) in crate::ops::walk(root, root)? {
         if relative.ends_with('/') {
             out.push_str(&format!("{relative}\n"));
         } else {
@@ -392,7 +392,9 @@ pub fn scan_changes(root: &Path, timespan: Option<&Timespan>) -> Result<Vec<Chan
             let (added, removed) = ops::diff_counts(previous, &record.content);
             records.push(ChangeRecord {
                 recorded_at: record.recorded_at.clone(),
-                path: record.path.clone(),
+                // A record an earlier Windows build wrote carries `\`
+                // separators; every surface prints the canonical `/` form.
+                path: crate::versions::canonical_path(&record.path),
                 seq: record.seq,
                 cause: record.cause.clone(),
                 added,
@@ -797,6 +799,39 @@ mod tests {
 
     const DAWN_START: &str = "0000-01-01T00:00:00Z";
     const FAR_FUTURE_END: &str = "9999-12-31T23:59:59Z";
+
+    #[test]
+    fn changes_normalises_a_legacy_windows_path() {
+        let home = temp_dir("inspect-changes-legacy");
+        let root = root::root_in(&home);
+        root::ensure(&root).unwrap();
+        let store = crate::versions::store_dir(&root);
+        std::fs::create_dir_all(&store).unwrap();
+        // The store file an earlier Windows build wrote for the same file.
+        let record = serde_json::json!({
+            "path": "projects\\alpha\\a.txt",
+            "seq": 1,
+            "content": "one\n",
+            "cause": "create",
+            "recorded_at": "2027-01-03T08:00:00Z",
+        })
+        .to_string();
+        std::fs::write(
+            store.join(format!(
+                "{}.jsonl",
+                crate::versions::encode_key("projects\\alpha\\a.txt")
+            )),
+            record + "\n",
+        )
+        .unwrap();
+
+        let scanned = scan_changes(&root, Some(&Timespan::All)).unwrap();
+        assert_eq!(scanned[0].path, "projects/alpha/a.txt");
+
+        let out = changes_output(&root, Some(&Timespan::All)).unwrap();
+        assert!(out.contains("projects/alpha/a.txt\tcreate\t+1 -0"), "{out}");
+        assert!(!out.contains('\\'), "no backslash survives: {out}");
+    }
 
     #[test]
     fn changes_orders_multi_file_records_newest_first() {

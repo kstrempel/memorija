@@ -164,5 +164,6 @@ async fn http_client_sees_stdio_identical_memory_tool() {
 
     client.cancel().await.ok();
     server.kill().unwrap();
+    server.wait().unwrap();
     let _ = std::fs::remove_dir_all(&home);
 }
