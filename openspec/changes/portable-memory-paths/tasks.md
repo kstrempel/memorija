@@ -18,7 +18,7 @@
 ## 4. Whole-suite verification
 
 - [x] 4.1 Run `cargo test` and confirm the suite is green locally with no ignored tests beyond those already ignored.
-- [ ] 4.2 Push the branch and confirm the Windows job on `add-github-release-workflow` passes the four previously failing tests (`inspect::tests::list_names_nested_files_with_line_counts`, `inspect::tests::end_to_end_inspection_through_the_real_layout`, `ops::tests::view_directory_lists_tree_with_line_counts`, `web::tests::api_files_reports_metadata_for_recorded_and_unrecorded_files`) and the whole job; the `key_string_keeps_a_backslash_in_a_file_name` test is Unix-only, because Windows parses that backslash as a separator.
+- [x] 4.2 Push the branch and confirm the Windows job on `add-github-release-workflow` passes the four previously failing tests (`inspect::tests::list_names_nested_files_with_line_counts`, `inspect::tests::end_to_end_inspection_through_the_real_layout`, `ops::tests::view_directory_lists_tree_with_line_counts`, `web::tests::api_files_reports_metadata_for_recorded_and_unrecorded_files`) and the whole job; the `key_string_keeps_a_backslash_in_a_file_name` test is Unix-only, because Windows parses that backslash as a separator.
 
 ## Workflow follow-up
 
