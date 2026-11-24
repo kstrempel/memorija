@@ -252,11 +252,17 @@ async fn api_events(
 /// `location` and renders the matching screen.
 async fn shell() -> axum::response::Response {
     // Defense in depth (design D2): assets come from this origin only, and
-    // no inline script, style, or event handler can run.
+    // no inline script, style, or event handler can run. `no-cache` keeps a
+    // rebuilt binary from serving a stale shell whose markup predates its
+    // assets.
     let mut response = Html(INDEX_HTML).into_response();
     response.headers_mut().insert(
         "Content-Security-Policy",
         axum::http::HeaderValue::from_static(CSP),
+    );
+    response.headers_mut().insert(
+        "Cache-Control",
+        axum::http::HeaderValue::from_static("no-cache"),
     );
     response
 }
@@ -457,6 +463,9 @@ struct FileResponse {
     /// Whether the rendered content is the file's current content and latest
     /// recorded version (design D4).
     is_current: bool,
+    /// The line count of the content actually returned: the live file or the
+    /// chosen record (design D7).
+    lines: usize,
     /// The content rendered from markdown into HTML (design D2).
     html: String,
     /// The file's version timeline, oldest first (design D8).
@@ -562,7 +571,7 @@ async fn api_file(
     let latest_version = records.last().map(|record| record.seq);
     let history = history_of(&records);
 
-    let (version, is_current, html) = match query.version.as_deref() {
+    let (version, is_current, lines, html) = match query.version.as_deref() {
         None => {
             let content = std::fs::read_to_string(&target.path).map_err(|error| {
                 api_error(
@@ -573,7 +582,12 @@ async fn api_file(
                     ),
                 )
             })?;
-            (latest_version, true, markdown::render(&content))
+            (
+                latest_version,
+                true,
+                content.lines().count(),
+                markdown::render(&content),
+            )
         }
         Some(raw) => {
             let version: i64 = raw.trim().parse().map_err(|_| {
@@ -587,6 +601,7 @@ async fn api_file(
             (
                 Some(record.seq),
                 Some(record.seq) == latest_version,
+                record.content.lines().count(),
                 markdown::render(&record.content),
             )
         }
@@ -598,6 +613,7 @@ async fn api_file(
             version,
             latest_version,
             is_current,
+            lines,
             html,
             history,
         }),
@@ -719,7 +735,12 @@ mod tests {
                 body.contains(r#"aria-label="Appearance""#)
                     && body.contains(r#"data-theme-choice="light""#)
                     && body.contains(r#"data-theme-choice="dark""#)
-                    && body.contains(r#"data-theme-choice="system""#),
+                    && body.contains(r#"data-theme-choice="system""#)
+                    && body.contains(r#"aria-label="Light""#)
+                    && body.contains(r#"aria-label="Dark""#)
+                    && body.contains(r#"aria-label="System""#)
+                    && body.contains(r#"id="theme-label""#)
+                    && body.contains("THEME:"),
                 "{path} carries the appearance control: {body}"
             );
             let csp = header_value(&raw, "content-security-policy").expect("a CSP header");
@@ -729,6 +750,11 @@ mod tests {
                 "{path} carries the tightened policy"
             );
             assert!(!csp.contains("unsafe-inline"), "{path}: {csp}");
+            assert_eq!(
+                header_value(&raw, "cache-control").as_deref(),
+                Some("no-cache"),
+                "{path} must not be cached across rebuilds"
+            );
         }
 
         // An unknown API path stays a JSON 404, never the shell.
@@ -846,6 +872,7 @@ mod tests {
         );
         assert_eq!(json["version"], serde_json::Value::Null, "no records yet");
         assert_eq!(json["is_current"], true, "the live content is current");
+        assert_eq!(json["lines"], 7, "the rendered content's line count");
         assert_eq!(
             json["history"],
             serde_json::json!([]),
@@ -876,6 +903,7 @@ mod tests {
         assert_eq!(json["version"], 3, "{json}");
         assert_eq!(json["latest_version"], 3, "{json}");
         assert_eq!(json["is_current"], true, "{json}");
+        assert_eq!(json["lines"], 1, "the live content's line count: {json}");
         let html = json["html"].as_str().unwrap();
         assert!(html.contains("a2"), "the live content: {html}");
         assert!(!html.contains("a1"), "not the older line: {html}");
@@ -911,9 +939,16 @@ mod tests {
         assert_eq!(json["version"], 1, "{json}");
         assert_eq!(json["latest_version"], 3, "{json}");
         assert_eq!(json["is_current"], false, "{json}");
+        assert_eq!(json["lines"], 1, "version 1 is one line: {json}");
         let html = json["html"].as_str().unwrap();
         assert!(html.contains("a1"), "version 1's content: {html}");
         assert!(!html.contains("a2"), "nothing from later versions: {html}");
+
+        // A multi-line past version reports its own line count, not the live
+        // file's.
+        let (_, body) = http_get(port, "/api/file?path=a.txt&version=2");
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["lines"], 2, "version 2 is two lines: {json}");
 
         // The latest recorded version is still current when requested.
         let (_, body) = http_get(port, "/api/file?path=a.txt&version=3");

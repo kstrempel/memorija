@@ -23,8 +23,10 @@ var state = {
   changesFeed: null,
   filesView: null,
   filesList: null,
+  filesCount: null,
   reader: null,
-  readerBody: null
+  readerBody: null,
+  readerLines: null
 };
 
 // --------------------------------------------------------------- notices --
@@ -54,6 +56,41 @@ function element(tag, className, text) {
   return node;
 }
 
+// A path filter: the boxed `/` prompt and the search input inside one
+// bordered field. The prompt is decorative; the input carries the accessible
+// name the screen passes (design D5).
+function filterField(value, label, onInput) {
+  var field = element("div", "field");
+  var prompt = element("span", "prompt", "/");
+  prompt.setAttribute("aria-hidden", "true");
+  var input = document.createElement("input");
+  input.type = "search";
+  input.placeholder = "Filter by path";
+  input.value = value;
+  input.setAttribute("aria-label", label);
+  input.addEventListener("input", onInput);
+  // Clicking the boxed `/` prompt or the field's padding focuses the input,
+  // so the whole visible field behaves like one control.
+  field.addEventListener("click", function (event) {
+    if (event.target !== input) {
+      input.focus();
+    }
+  });
+  field.appendChild(prompt);
+  field.appendChild(input);
+  return field;
+}
+
+// The visible `/` hint beside a list screen's description (spec: path filters
+// focus with a slash shortcut).
+function filterHint() {
+  var hint = element("span", "hint");
+  hint.appendChild(document.createTextNode("[press "));
+  hint.appendChild(element("kbd", null, "/"));
+  hint.appendChild(document.createTextNode(" to filter]"));
+  return hint;
+}
+
 // ------------------------------------------------------------- appearance --
 
 // The appearance control (design D4, D5). theme.js already put the stored
@@ -74,11 +111,28 @@ function storedTheme() {
   }
 }
 
+// The appearance actually in effect: the explicit choice when one is set,
+// otherwise the operating system's preference (design D3).
+function effectiveAppearance() {
+  var explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit === "light" || explicit === "dark") {
+    return explicit;
+  }
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
+
 function markAppearance(choice) {
   var buttons = document.querySelectorAll("[data-theme-choice]");
   for (var i = 0; i < buttons.length; i++) {
     var pressed = buttons[i].dataset.themeChoice === choice;
     buttons[i].setAttribute("aria-pressed", pressed ? "true" : "false");
+  }
+  var label = document.getElementById("theme-label");
+  if (label) {
+    label.textContent = "THEME:" + effectiveAppearance().toUpperCase();
   }
 }
 
@@ -118,6 +172,20 @@ if (appearanceControl) {
     applyAppearance(button.dataset.themeChoice);
   });
   applyAppearance(storedTheme());
+
+  // While System is the choice, the readout follows the operating system
+  // without a reload; an explicit choice ignores this listener (design D3).
+  if (window.matchMedia) {
+    var scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    var followSystem = function () {
+      markAppearance(storedTheme());
+    };
+    if (scheme.addEventListener) {
+      scheme.addEventListener("change", followSystem);
+    } else if (scheme.addListener) {
+      scheme.addListener(followSystem);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- routing --
@@ -181,9 +249,10 @@ function render() {
   state.changesFeed = null;
   state.filesList = null;
   state.filesView = null;
+  state.filesCount = null;
   state.readerBody = null;
   state.reader = null;
-  state.readerTitle = null;
+  state.readerLines = null;
   state.readerOffered = null;
   state.readerUpdateBanner = null;
   hideNewChanges();
@@ -240,6 +309,54 @@ document.addEventListener("click", function (event) {
 });
 
 window.addEventListener("popstate", render);
+
+// The current list screen's filter input, or null on a screen without one.
+function currentFilter() {
+  if (state.route.name !== "changes" && state.route.name !== "files") {
+    return null;
+  }
+  return screen.querySelector(".field input");
+}
+
+// `/` focuses the list filter and Escape releases it (spec: path filters focus
+// with a slash shortcut). Modifiers and anything editable are left alone, so
+// typing is never hijacked.
+document.addEventListener("keydown", function (event) {
+  if (event.key === "Escape") {
+    var focused = document.activeElement;
+    if (focused && focused.matches && focused.matches(".field input")) {
+      focused.blur();
+    }
+    return;
+  }
+  if (
+    event.defaultPrevented ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    event.key !== "/"
+  ) {
+    return;
+  }
+  var target = event.target;
+  if (
+    target &&
+    target.closest &&
+    target.closest("input, textarea, select, [contenteditable]")
+  ) {
+    return;
+  }
+  var input = currentFilter();
+  if (!input) {
+    return;
+  }
+  event.preventDefault();
+  input.focus();
+  var end = input.value.length;
+  if (input.setSelectionRange) {
+    input.setSelectionRange(end, end);
+  }
+});
 
 // ---------------------------------------------------------------- screens --
 
@@ -322,13 +439,16 @@ function renderChanges(target, params) {
   var filter = params.get("path") || "";
   state.changesView = { span: span, filter: filter };
 
-  target.appendChild(
+  var head = element("div", "screen-head");
+  head.appendChild(
     element(
       "p",
       "muted",
       "Recorded changes, newest first. Select a change to read that version."
     )
   );
+  head.appendChild(filterHint());
+  target.appendChild(head);
 
   var toolbar = element("div", "toolbar");
   SPANS.forEach(function (choice) {
@@ -340,20 +460,17 @@ function renderChanges(target, params) {
     toolbar.appendChild(chip);
   });
 
-  var input = document.createElement("input");
-  input.type = "search";
-  input.placeholder = "Filter by path";
-  input.value = filter;
-  input.setAttribute("aria-label", "Filter changes by path");
-  input.addEventListener("input", function () {
-    if (!state.changesView) {
-      return;
-    }
-    state.changesView.filter = input.value;
-    replaceChangesAddress(state.changesView.span, input.value);
-    renderChangesFeed();
-  });
-  toolbar.appendChild(input);
+  toolbar.appendChild(
+    filterField(filter, "Filter changes by path", function (event) {
+      if (!state.changesView) {
+        return;
+      }
+      var input = event.target;
+      state.changesView.filter = input.value;
+      replaceChangesAddress(state.changesView.span, input.value);
+      renderChangesFeed();
+    })
+  );
   target.appendChild(toolbar);
 
   var feed = element("div", "feed");
@@ -400,8 +517,9 @@ function renderChangesFeed() {
   });
 }
 
-// One feed row: time, path, cause, `+N -M`, and the recorded version. It is
-// a real link to the Reader at that version (design D7).
+// One feed row: time, path, and the right cluster of cause, `+N -M`, and the
+// recorded version. It is a real link to the Reader at that version; the `▸`
+// marker is decorative CSS, not a disclosure control.
 function changeRow(change) {
   var href =
     "/file?path=" +
@@ -409,15 +527,17 @@ function changeRow(change) {
     "&version=" +
     change.seq +
     "&from=changes";
-  var row = link(href, "", "row");
+  var row = link(href, "", "row change-row");
   row.appendChild(element("span", "when", change.recorded_at.slice(11, 19)));
   row.appendChild(element("span", "file", change.path));
-  row.appendChild(element("span", "cause", change.cause));
+  var meta = element("span", "meta");
+  meta.appendChild(element("span", "cause", change.cause));
   var size = element("span", "size");
   size.appendChild(element("span", "added", "+" + change.added));
-  size.appendChild(element("span", "removed", " -" + change.removed));
-  row.appendChild(size);
-  row.appendChild(element("span", "version", "v" + change.seq));
+  size.appendChild(element("span", "removed", "-" + change.removed));
+  meta.appendChild(size);
+  meta.appendChild(element("span", "version", "v" + change.seq));
+  row.appendChild(meta);
   return row;
 }
 
@@ -451,29 +571,31 @@ function renderFiles(target, params) {
   var filter = params.get("q") || "";
   state.filesView = { filter: filter };
 
-  target.appendChild(
+  var head = element("div", "screen-head");
+  head.appendChild(
     element(
       "p",
       "muted",
       "Every memory file in your memory directory, whether or not it has recorded changes."
     )
   );
+  var meta = element("span", "screen-meta");
+  state.filesCount = element("span", "count", "");
+  meta.appendChild(state.filesCount);
+  head.appendChild(meta);
+  target.appendChild(head);
 
   var toolbar = element("div", "toolbar");
-  var input = document.createElement("input");
-  input.type = "search";
-  input.placeholder = "Filter by path";
-  input.value = filter;
-  input.setAttribute("aria-label", "Filter files by path");
-  input.addEventListener("input", function () {
-    if (!state.filesView) {
-      return;
-    }
-    state.filesView.filter = input.value;
-    history.replaceState(null, "", filesAddress(input.value));
-    renderFilesList();
-  });
-  toolbar.appendChild(input);
+  toolbar.appendChild(
+    filterField(filter, "Filter files by path", function (event) {
+      if (!state.filesView) {
+        return;
+      }
+      state.filesView.filter = event.target.value;
+      history.replaceState(null, "", filesAddress(event.target.value));
+      renderFilesList();
+    })
+  );
   target.appendChild(toolbar);
 
   var list = element("div", "files");
@@ -518,6 +640,13 @@ function renderFilesList() {
     return;
   }
   list.textContent = "";
+
+  var filter = state.filesView.filter;
+  var filtered = state.files.filter(function (file) {
+    return !filter || file.path.indexOf(filter) !== -1;
+  });
+  updateFilesCount(filtered.length, state.files.length, filter);
+
   if (state.files.length === 0) {
     list.appendChild(
       element(
@@ -528,10 +657,6 @@ function renderFilesList() {
     );
     return;
   }
-  var filter = state.filesView.filter;
-  var filtered = state.files.filter(function (file) {
-    return !filter || file.path.indexOf(filter) !== -1;
-  });
   if (filtered.length === 0) {
     list.appendChild(element("p", "muted empty", "No files match the filter."));
     return;
@@ -549,7 +674,7 @@ function renderFilesList() {
   var directories = Array.from(groups.keys()).sort();
   directories.forEach(function (directory) {
     list.appendChild(
-      element("h2", "day", directory === "" ? "Top level" : directory + "/")
+      element("h2", "group", directory === "" ? "Top level" : directory + "/")
     );
     var rows = element("div", "rows");
     groups.get(directory).forEach(function (file) {
@@ -559,32 +684,51 @@ function renderFilesList() {
   });
 }
 
-// One file row: path, line count, latest version, and last change time. It
-// opens the Reader at the file's latest version (design D4).
+// The count names the files currently listed; a filter makes the total visible
+// so it is clear what was narrowed away (design D4).
+function updateFilesCount(shown, total, filter) {
+  if (!state.filesCount) {
+    return;
+  }
+  var noun = total === 1 ? " file" : " files";
+  state.filesCount.textContent = filter
+    ? shown + " of " + total + noun
+    : total + noun;
+}
+
+// One file row: path on the left, line count / version / last change as the
+// right cluster. It opens the Reader at the file's latest version; the `▸`
+// marker is decorative CSS, not a disclosure control.
 function fileRow(file) {
   var row = link(
     "/file?path=" + encodeURIComponent(file.path) + "&from=files",
     "",
-    "row"
+    "row file-row"
   );
   row.appendChild(element("span", "file", file.path));
+  var meta = element("span", "meta");
   var count =
     file.lines === null
       ? "—"
       : file.lines + (file.lines === 1 ? " line" : " lines");
-  row.appendChild(element("span", "lines", count));
+  meta.appendChild(element("span", "lines", count));
   if (file.latest_version !== null) {
-    row.appendChild(element("span", "version", "v" + file.latest_version));
+    meta.appendChild(
+      element("span", "version", "v" + file.latest_version)
+    );
   }
   if (file.last_changed) {
-    row.appendChild(
+    meta.appendChild(
       element(
         "span",
-        "when",
-        file.last_changed.slice(0, 10) + " " + file.last_changed.slice(11, 16)
+        "stamp",
+        file.last_changed.slice(0, 10) +
+          " " +
+          file.last_changed.slice(11, 16)
       )
     );
   }
+  row.appendChild(meta);
   return row;
 }
 
@@ -625,13 +769,18 @@ function renderReader(target, params) {
   var from = params.get("from") === "files" ? "files" : "changes";
   state.reader = { path: path, version: version, from: from, data: null };
 
-  // The back link is a display hint carried in the address (design D9).
-  var back = link(
-    from === "files" ? "/files" : "/changes",
-    from === "files" ? "← All files" : "← Recent changes",
-    "back"
+  // The back link and the shown version's line count share the top row.
+  var head = element("div", "screen-head reader-head");
+  head.appendChild(
+    link(
+      from === "files" ? "/files" : "/changes",
+      from === "files" ? "← All files" : "← Recent changes",
+      "back"
+    )
   );
-  target.appendChild(back);
+  state.readerLines = element("span", "lines", "");
+  head.appendChild(state.readerLines);
+  target.appendChild(head);
 
   if (!path) {
     target.appendChild(
@@ -643,9 +792,6 @@ function renderReader(target, params) {
     );
     return;
   }
-
-  state.readerTitle = element("h2", "reader-title", path);
-  target.appendChild(state.readerTitle);
 
   var slot = element("div", "reader");
   state.readerBody = slot;
@@ -667,6 +813,9 @@ function renderReaderData(result) {
   }
   slot.textContent = "";
   if (result.status !== 200 || data.error) {
+    if (state.readerLines) {
+      state.readerLines.textContent = "";
+    }
     slot.appendChild(
       element(
         "p",
@@ -677,12 +826,12 @@ function renderReaderData(result) {
     return;
   }
   reader.data = data;
-  if (state.readerTitle) {
-    state.readerTitle.textContent =
-      data.path + (data.version === null ? "" : " · v" + data.version);
+  if (state.readerLines && typeof data.lines === "number") {
+    state.readerLines.textContent =
+      data.lines + (data.lines === 1 ? " line" : " lines");
   }
 
-  renderVersionStrip(slot, data);
+  renderFileBar(slot, data);
 
   if (!data.is_current) {
     var past = element("div", "past-version");
@@ -705,14 +854,6 @@ function renderReaderData(result) {
       )
     );
     slot.appendChild(past);
-  } else if (data.version !== null) {
-    slot.appendChild(
-      element(
-        "p",
-        "muted selected-version",
-        describedVersion(data)
-      )
-    );
   }
 
   var body = element("div", "file-body");
@@ -722,64 +863,67 @@ function renderReaderData(result) {
   slot.appendChild(body);
 }
 
-// The scrollable strip of every recorded version, oldest to newest, with the
-// selection marked and scrolled into view (design D8).
-function renderVersionStrip(slot, data) {
-  if (!data.history || data.history.length === 0) {
-    return;
-  }
-  var strip = element("div", "versions");
-  strip.setAttribute("aria-label", "Recorded versions");
+// The file bar: identity on the left, the version tabs on the right. HEAD is
+// the current content (no version in the address); every recorded version is
+// a real link, and the shown tab is filled and scrolled into view (design D6).
+function renderFileBar(slot, data) {
+  var bar = element("div", "file-bar");
+  var name = element("span", "name");
+  name.appendChild(element("span", "sig", "::"));
+  name.appendChild(element("span", "path", data.path));
+  bar.appendChild(name);
+
+  var versions = element("div", "versions");
+  versions.setAttribute("aria-label", "Recorded versions");
   var selected = null;
-  data.history.forEach(function (entry) {
-    var chip = link(
-      readerAddress(data.path, entry.seq, state.reader.from),
-      "v" + entry.seq,
+
+  if (data.history && data.history.length > 0) {
+    data.history.forEach(function (entry) {
+      var chip = link(
+        readerAddress(data.path, entry.seq, state.reader.from),
+        "v" + entry.seq,
+        "chip"
+      );
+      chip.title =
+        entry.recorded_at +
+        " · " +
+        entry.cause +
+        " (+" +
+        entry.added +
+        " -" +
+        entry.removed +
+        ")";
+      if (!data.is_current && entry.seq === data.version) {
+        chip.className = "chip selected";
+        chip.setAttribute("aria-current", "true");
+        selected = chip;
+      }
+      versions.appendChild(chip);
+    });
+    var head = link(
+      readerAddress(data.path, null, state.reader.from),
+      "HEAD",
       "chip"
     );
-    chip.title =
-      entry.recorded_at +
-      " · " +
-      entry.cause +
-      " (+" +
-      entry.added +
-      " -" +
-      entry.removed +
-      ")";
-    if (entry.seq === data.version) {
-      chip.className = "chip selected";
-      chip.setAttribute("aria-current", "true");
-      selected = chip;
+    head.title = "Current content";
+    if (data.is_current) {
+      head.className = "chip selected";
+      head.setAttribute("aria-current", "true");
+      selected = head;
     }
-    strip.appendChild(chip);
-  });
-  slot.appendChild(strip);
-  if (selected) {
-    strip.scrollLeft =
-      selected.offsetLeft - strip.clientWidth / 2 + selected.clientWidth / 2;
+    versions.appendChild(head);
+  } else {
+    var badge = element("span", "chip head-badge", "HEAD");
+    versions.appendChild(badge);
   }
-}
 
-// The selected record described in words: version, time, cause, and size.
-function describedVersion(data) {
-  var entry = (data.history || []).filter(function (candidate) {
-    return candidate.seq === data.version;
-  })[0];
-  if (!entry) {
-    return "v" + data.version;
+  bar.appendChild(versions);
+  slot.appendChild(bar);
+
+  if (selected) {
+    versions.scrollLeft =
+      selected.offsetLeft - versions.clientWidth / 2 + selected.clientWidth / 2;
   }
-  return (
-    "v" +
-    entry.seq +
-    " · " +
-    entry.recorded_at +
-    " · " +
-    entry.cause +
-    " · +" +
-    entry.added +
-    " -" +
-    entry.removed
-  );
 }
 
 function renderNotFound(target) {
@@ -884,8 +1028,44 @@ function offerNewerVersion(entry) {
       "latest-link"
     )
   );
-  slot.insertBefore(banner, slot.firstChild);
+  var body = slot.querySelector(".file-body");
+  if (body) {
+    slot.insertBefore(banner, body);
+  } else {
+    slot.appendChild(banner);
+  }
   state.readerUpdateBanner = banner;
+  markShownVersion(slot, state.reader.data);
+}
+
+// Once a live update makes HEAD stale, the bar marks the version actually on
+// screen instead of HEAD, while the banner offers the newer one (design D6).
+function markShownVersion(slot, data) {
+  if (!slot || !data || data.version === null || data.version === undefined) {
+    return;
+  }
+  var versions = slot.querySelector(".versions");
+  if (!versions) {
+    return;
+  }
+  var head = null;
+  var target = null;
+  var chips = versions.querySelectorAll(".chip");
+  for (var i = 0; i < chips.length; i++) {
+    if (chips[i].textContent === "HEAD") {
+      head = chips[i];
+    }
+    if (chips[i].textContent === "v" + data.version) {
+      target = chips[i];
+    }
+  }
+  if (!head || !target || !head.classList.contains("selected")) {
+    return;
+  }
+  head.classList.remove("selected");
+  head.removeAttribute("aria-current");
+  target.classList.add("selected");
+  target.setAttribute("aria-current", "true");
 }
 
 translateLegacyAddress();

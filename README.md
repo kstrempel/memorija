@@ -107,15 +107,19 @@ on startup when binding to a non-loopback address. Defaults: port `8081`
 (beside `serve --http`'s 8080), host `127.0.0.1`.
 
 The viewer offers no way to modify memories — it only reads the memory root
-and the version store, and never creates or seeds either.
+and the version store, and never creates or seeds either. It uses a monospace,
+square-edged terminal layout; the `/` key focuses the path filter on the
+Changes and Files screens, and `Escape` releases it.
 
-The viewer follows your system's light or dark appearance. The header also
-offers **Light**, **Dark**, and **System**: the explicit choice is remembered in
-the browser (a `localStorage` entry, scoped to the viewer's address, so a
-different port or host starts from the system preference again) and is never
-sent to the server. Choosing **System** returns to the operating system
-preference, and the open page follows it without a reload. Changing the
-appearance never touches a memory file or version record.
+The viewer follows your system's light or dark appearance. In the header, a
+`THEME:` readout names the appearance in effect beside three icon controls
+(sun, moon, monitor) for **Light**, **Dark**, and **System**. The explicit
+choice is remembered in the browser (a `localStorage` entry, scoped to the
+viewer's address, so a different port or host starts from the system preference
+again) and is never sent to the server. Choosing **System** returns to the
+operating system preference, and the open page follows it without a reload;
+the readout keeps naming the appearance in effect while System is selected.
+Changing the appearance never touches a memory file or version record.
 
 The header navigates three screens, each at its own address:
 
@@ -126,10 +130,12 @@ The header navigates three screens, each at its own address:
   recorded version.
 - **Files** (`/files?q=`) lists every memory file in the memory root, grouped
   by directory in path order, with its line count, latest version, and last
-  change time; files without recorded changes appear too. Selecting one opens
+  change time; files without recorded changes appear too. The intro reports
+  how many files are listed (`N of M` while filtering). Selecting one opens
   the Reader at its latest version.
 - **Reader** (`/file?path=<file>&version=<n>&from=changes|files`) renders the
-  file from markdown and offers its recorded versions as a strip; a past
+  file from markdown in a `:: path` bar with the shown line count and its
+  recorded versions as links, ending in `HEAD` (the current content); a past
   version is marked as historical with a return to the latest. Without
   `version`, the current content is shown. Files with no recorded versions
   show just their content.
@@ -200,7 +206,10 @@ same origin with `Cache-Control: no-cache`, and constrained by a strict CSP
 (`'self'` for scripts, styles, and connections — no inline code). `theme.js` is
 a tiny parser-blocking bootstrap in `<head>`: it applies a stored appearance
 choice before the body paints, which is why it exists as its own asset instead
-of an inline script.
+of an inline script. The terminal appearance lives entirely in `app.css`:
+semantic custom properties (`--page`, `--panel`, `--rule`, `--ink`, `--accent`,
+…) declared once for light and once for dark, repeated for the explicit
+`data-theme` selectors.
 
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.
