@@ -276,6 +276,14 @@ and style attributes; `script-src` stays `'self'` with no inline script and no
 must keep those three properties — the commands that check them are in the
 vendor README.
 
+Memory paths are canonical: every path the CLI, the MCP tool, and the web viewer
+report is relative to the memory root with `/` between segments
+(`paths::key_string`), so `list`, `history`, the Files index and Reader addresses
+agree on macOS, Linux and Windows. Version-store files an earlier Windows build
+keyed with `\` (`%5C`) are still read from and appended to —
+`versions::decode_key` normalises them — so an existing history is neither lost
+nor split in two.
+
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.
 
