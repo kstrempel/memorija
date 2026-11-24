@@ -114,7 +114,25 @@ fn record_file(store: &Path, rel_path: &str) -> Result<PathBuf, String> {
     if rel_path.is_empty() {
         return Err("Error: the memory root itself has no version records".to_string());
     }
-    Ok(store.join(format!("{}.jsonl", encode_key(rel_path))))
+    let canonical = store.join(format!("{}.jsonl", encode_key(rel_path)));
+    if canonical.exists() {
+        return Ok(canonical);
+    }
+    // A store written before paths were canonical spells `/` as `\`. Reading
+    // and appending through that file keeps one history for the path instead of
+    // starting a second one at seq 1. The fallback is a lookup only, so a
+    // canonical file always wins and a Unix name that really contains a
+    // backslash keeps its own store file.
+    if rel_path.contains('/') {
+        let legacy = store.join(format!(
+            "{}.jsonl",
+            encode_key(&rel_path.replace('/', "\\"))
+        ));
+        if legacy.exists() {
+            return Ok(legacy);
+        }
+    }
+    Ok(canonical)
 }
 
 /// Encode a relative path into one file-name component: `/` becomes `%2F`
@@ -151,7 +169,17 @@ pub fn decode_key(encoded: &str) -> String {
         out.push(bytes[index]);
         index += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    canonical_path(&String::from_utf8_lossy(&out))
+}
+
+/// A recorded path's canonical spelling: `/` between segments on every
+/// platform.
+///
+/// A store file written by an earlier Windows build decodes to a path with `\`
+/// separators. Every surface that prints or keys a recorded path reads through
+/// this, so one file's history is not split by the spelling a build chose.
+pub(crate) fn canonical_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 /// The sequence number of a store file's last record, or 0 when it is new.
@@ -324,6 +352,69 @@ mod tests {
             "broken%ZZ",
             "invalid escapes pass through"
         );
+    }
+
+    #[test]
+    fn decode_key_normalises_a_legacy_windows_separator() {
+        assert_eq!(decode_key("a%5Cb.txt"), "a/b.txt");
+        assert_eq!(
+            decode_key(&encode_key("projects\\alpha\\notes.txt")),
+            "projects/alpha/notes.txt",
+            "a store file an earlier Windows build wrote names one path"
+        );
+    }
+
+    #[test]
+    fn a_legacy_windows_store_keeps_its_history() {
+        let store = setup("versions-legacy-windows");
+        // The file an earlier Windows build wrote for `a/b.txt`.
+        std::fs::write(
+            store.join(format!("{}.jsonl", encode_key("a\\b.txt"))),
+            concat!(
+                r#"{"path":"a\\b.txt","seq":1,"content":"one\n","cause":"create","recorded_at":"2027-01-01T10:00:00Z"}"#,
+                "\n",
+                r#"{"path":"a\\b.txt","seq":2,"content":"two\n","cause":"str_replace","recorded_at":"2027-01-02T10:00:00Z"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let records = read(&store, "a/b.txt").unwrap();
+        assert_eq!(
+            records.iter().map(|r| r.seq).collect::<Vec<_>>(),
+            [1, 2],
+            "the canonical path reads the legacy file"
+        );
+        assert_eq!(records[1].content, "two\n");
+
+        let third = append(&store, "a/b.txt", "three\n", "insert").unwrap();
+        assert_eq!(third.seq, 3, "the legacy sequence continues");
+        assert!(
+            !store
+                .join(format!("{}.jsonl", encode_key("a/b.txt")))
+                .exists(),
+            "no second history file starts beside the legacy one"
+        );
+        let all = read(&store, "a/b.txt").unwrap();
+        assert_eq!(all.iter().map(|r| r.seq).collect::<Vec<_>>(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn a_canonical_store_file_wins_over_a_legacy_one() {
+        let store = setup("versions-canonical-wins");
+        append(&store, "a/b.txt", "canonical\n", "create").unwrap();
+        std::fs::write(
+            store.join(format!("{}.jsonl", encode_key("a\\b.txt"))),
+            concat!(
+                r#"{"path":"a\\b.txt","seq":9,"content":"legacy\n","cause":"create","recorded_at":"2027-01-01T10:00:00Z"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let records = read(&store, "a/b.txt").unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].content, "canonical\n");
     }
 
     #[test]

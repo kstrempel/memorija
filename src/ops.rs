@@ -674,6 +674,22 @@ mod tests {
     }
 
     #[test]
+    fn walk_and_the_store_key_agree_on_forward_slashes() {
+        let root = setup("canonical-relative");
+        with_file(&root, "projects/alpha/notes.txt", "x\n");
+
+        let walked = walk(&root, &root).unwrap();
+        assert!(
+            walked
+                .iter()
+                .any(|(lines, path)| path == "projects/alpha/notes.txt" && lines == "1"),
+            "{walked:?}"
+        );
+        let target = crate::paths::resolve(&root, "/memories/projects/alpha/notes.txt").unwrap();
+        assert_eq!(rel_key(&root, &target).unwrap(), "projects/alpha/notes.txt");
+    }
+
+    #[test]
     fn view_directory_lists_tree_with_line_counts() {
         let root = setup("view-dir");
         with_file(&root, "a.txt", "1\n2\n");

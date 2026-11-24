@@ -1314,6 +1314,45 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn api_files_reads_versions_from_a_legacy_windows_store() {
+        let home = temp_dir("web-files-legacy");
+        let root = root::root_in(&home);
+        std::fs::create_dir_all(root.join("projects/alpha")).unwrap();
+        std::fs::write(root.join("projects/alpha/notes.txt"), "one\ntwo\n").unwrap();
+        // The store an earlier Windows build wrote for that same file.
+        seed_store(
+            &root,
+            &[
+                (
+                    "projects\\alpha\\notes.txt",
+                    1,
+                    "one\n",
+                    "create",
+                    "2027-01-01T10:00:00Z",
+                ),
+                (
+                    "projects\\alpha\\notes.txt",
+                    2,
+                    "one\ntwo\n",
+                    "insert",
+                    "2027-01-05T12:30:00Z",
+                ),
+            ],
+        );
+        let port = spawn_app(root).await;
+
+        let (status, body) = http_get(port, "/api/files");
+        assert_eq!(status, 200, "{body}");
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let files = json["files"].as_array().expect("a files array");
+        assert_eq!(files.len(), 1, "{json}");
+        assert_eq!(files[0]["path"], "projects/alpha/notes.txt", "{json}");
+        assert_eq!(files[0]["latest_version"], 2, "{json}");
+        assert_eq!(files[0]["last_changed"], "2027-01-05T12:30:00Z", "{json}");
+        assert_eq!(files[0]["lines"], 2, "{json}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn api_files_on_a_missing_root_is_an_empty_list() {
         let root = root::root_in(&temp_dir("web-files-missing"));
         assert!(!root.exists(), "the viewer must not need the root to exist");
