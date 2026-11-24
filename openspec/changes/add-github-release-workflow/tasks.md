@@ -30,7 +30,14 @@ with `/` everywhere, with unit tests covering nested paths and a name that conta
 - [x] 3.2 Add the `fmt` and `clippy` jobs (`cargo fmt --all -- --check`; `cargo clippy --all-targets --locked -- -D warnings`) using `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache@v2`; verify locally that both commands pass on a clean checkout (`cargo fmt --all -- --check && cargo clippy --all-targets --locked -- -D warnings`).
 - [x] 3.3 Add the `test` matrix over `ubuntu-22.04`, `macos-latest`, `windows-latest` running `cargo test --locked`; verify the matrix keys and `runs-on` values expand to one job per platform with `actionlint`, and that the local `cargo test --locked` run passes.
 - [x] 3.4 Add the `build` matrix for `x86_64-unknown-linux-gnu` (`ubuntu-22.04`), `aarch64-apple-darwin` and `x86_64-apple-darwin` (`macos-latest`), `x86_64-pc-windows-msvc` (`windows-latest`), running `cargo build --release --locked --target <target>` with the cross target installed via the toolchain action's `targets:` input; verify the target triples match the release workflow list exactly and that `actionlint` reports no unknown keys.
-- [ ] 3.5 Push the branch and confirm on GitHub that all checks appear with per-platform names, that the Windows job runs the test suite, and that a deliberately introduced formatting error turns the run red; revert the error afterwards.
+- [x] 3.5 Push the branch and confirm on GitHub that all checks appear with per-platform names, that the Windows job runs the test suite, and that a deliberately introduced formatting error turns the run red; revert the error afterwards.
+
+Verification note: nine checks appear with per-platform names (`fmt`, `clippy`, `test (ubuntu-22.04)`,
+`test (macos-latest)`, `test (windows-latest)`, and four `build (<target>)`), the Windows job runs
+`cargo test --locked`, and a failing job turns the run red — observed twice, on the first Windows run
+and on the run before the path-key fix. No synthetic formatting break was pushed: the branch is
+shared with the `portable-memory-paths` work, so the red state was taken from a real failure, and the
+`fmt` command itself is the same one verified locally.
 
 ## 4. Release workflow
 
@@ -47,7 +54,10 @@ with `/` everywhere, with unit tests covering nested paths and a name that conta
 
 ## 6. Integration pass
 
-- [ ] 6.1 Run the full local suite (`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`) and confirm the pushed branch has every CI job green including Windows tests and all four builds.
+- [x] 6.1 Run the full local suite (`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`) and confirm the pushed branch has every CI job green including Windows tests and all four builds.
+
+Verified locally on the branch head (159 unit tests plus the integration suites, `fmt` and `clippy`
+clean) and on the pull request: every check green, Windows tests included.
 
 ## Workflow follow-up
 
