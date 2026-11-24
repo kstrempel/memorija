@@ -30,16 +30,27 @@ mod markdown;
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The embedded shell (design D2): one document, one stylesheet, two client
-/// scripts — no front-end build step. `theme.js` is the appearance bootstrap
-/// loaded from `<head>`, `app.js` the client router and screen renderers.
+/// scripts, and the vendored diagram renderer — no front-end build step.
+/// `prefs.js` is the preference bootstrap loaded from `<head>`, `app.js` the
+/// client router and screen renderers, and the Mermaid bundle is fetched only
+/// for a file that contains a diagram (design D5).
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_CSS: &str = include_str!("app.css");
 const APP_JS: &str = include_str!("app.js");
-const THEME_JS: &str = include_str!("theme.js");
+const PREFS_JS: &str = include_str!("prefs.js");
+const MERMAID_JS: &str = include_str!("vendor/mermaid.min.js");
 
-/// The viewer's Content-Security-Policy (design D2): only same-origin
-/// assets and connections, no inline script, style, or event handlers.
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
+/// The viewer's Content-Security-Policy (design D2 of the web viewer and D2 of
+/// `add-mermaid-diagram-rendering`): assets and connections from this origin
+/// only, and no inline script or event handlers.
+///
+/// The one exception is `style-src`'s `'unsafe-inline'`: Mermaid writes a
+/// `<style>` element and style attributes into the SVG it draws, and the
+/// policy would otherwise blank the diagram (spec: `web-ui`, "Diagram content
+/// cannot run code or reach the network", which keeps script inline-free). Do
+/// not remove it without taking the diagrams with it, and do not widen
+/// `script-src` to compensate for anything.
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'";
 
 /// State shared by all handlers: the memory root the viewer reads from and
 /// the latest feed + index snapshot pushed by the poller (design D4).
@@ -63,7 +74,8 @@ pub fn app(root: PathBuf) -> Router {
         .route("/file", get(shell))
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
-        .route("/theme.js", get(theme_js))
+        .route("/prefs.js", get(prefs_js))
+        .route("/mermaid.js", get(mermaid_js))
         .route("/api/changes", get(api_changes))
         .route("/api/files", get(api_files))
         .route("/api/file", get(api_file))
@@ -252,9 +264,10 @@ async fn api_events(
 /// `location` and renders the matching screen.
 async fn shell() -> axum::response::Response {
     // Defense in depth (design D2): assets come from this origin only, and
-    // no inline script, style, or event handler can run. `no-cache` keeps a
-    // rebuilt binary from serving a stale shell whose markup predates its
-    // assets.
+    // no inline script or event handler can run; inline style is allowed
+    // solely because Mermaid writes its SVG's styling that way (see `CSP`).
+    // `no-cache` keeps a rebuilt binary from serving a stale shell whose
+    // markup predates its assets.
     let mut response = Html(INDEX_HTML).into_response();
     response.headers_mut().insert(
         "Content-Security-Policy",
@@ -277,10 +290,17 @@ async fn app_js() -> axum::response::Response {
     asset_response(APP_JS, "text/javascript; charset=utf-8")
 }
 
-/// `GET /theme.js`: the embedded appearance bootstrap, served from the same
-/// origin so the strict CSP keeps working (design D3).
-async fn theme_js() -> axum::response::Response {
-    asset_response(THEME_JS, "text/javascript; charset=utf-8")
+/// `GET /prefs.js`: the embedded preference bootstrap, served from the same
+/// origin so the strict CSP keeps working (design D3, D6).
+async fn prefs_js() -> axum::response::Response {
+    asset_response(PREFS_JS, "text/javascript; charset=utf-8")
+}
+
+/// `GET /mermaid.js`: the vendored Mermaid bundle that draws diagrams in the
+/// Reader (design D1, D5). Same origin, so `script-src 'self'` covers it; the
+/// client asks for it only when a rendered file actually contains a diagram.
+async fn mermaid_js() -> axum::response::Response {
+    asset_response(MERMAID_JS, "text/javascript; charset=utf-8")
 }
 
 /// An embedded asset with its content type, and `no-cache` so a rebuilt
@@ -726,30 +746,106 @@ mod tests {
             assert!(
                 body.contains("/app.css")
                     && body.contains("/app.js")
-                    && body.contains("/theme.js"),
+                    && body.contains("/prefs.js"),
                 "{path} references the split assets: {body}"
             );
-            // The appearance control is part of the shared header on every
-            // screen, with all three choices served statically.
+            // The settings control and its dialog are part of the shared shell
+            // on every screen, and the dialog is closed in the served markup so
+            // it stays out of the way without JavaScript (design D1, D2).
             assert!(
-                body.contains(r#"aria-label="Appearance""#)
-                    && body.contains(r#"data-theme-choice="light""#)
-                    && body.contains(r#"data-theme-choice="dark""#)
-                    && body.contains(r#"data-theme-choice="system""#)
-                    && body.contains(r#"aria-label="Light""#)
-                    && body.contains(r#"aria-label="Dark""#)
-                    && body.contains(r#"aria-label="System""#)
-                    && body.contains(r#"id="theme-label""#)
-                    && body.contains("THEME:"),
-                "{path} carries the appearance control: {body}"
+                body.contains(r#"aria-label="Settings""#)
+                    && body.contains(r#"aria-haspopup="dialog""#),
+                "{path} carries the settings control: {body}"
+            );
+            let dialog = body.find("<dialog class=\"settings\"").unwrap_or_else(|| {
+                panic!("{path} serves the settings dialog: {body}");
+            });
+            assert!(
+                body.contains(r#"id="settings-title""#)
+                    && body.contains("Appearance")
+                    && body.contains("Page width")
+                    && body.contains("data-settings-close"),
+                "{path} fills the settings dialog: {body}"
+            );
+            // Served closed: the opening tag carries no `open` attribute, so
+            // the dialog stays out of the way without JavaScript.
+            let tag_end = dialog + body[dialog..].find('>').expect("a dialog start tag");
+            let start_tag = &body[dialog..tag_end];
+            assert!(
+                !start_tag.contains(" open"),
+                "{path} serves the dialog closed: {start_tag}"
+            );
+            // Both settings live inside the dialog, not in the header, and the
+            // appearance choice is a labelled three-segment control named by
+            // its legend - no separate status readout (design D3).
+            assert!(
+                body.contains(r#"<legend class="settings-label">Appearance</legend>"#)
+                    && body.contains("<span>Light</span>")
+                    && body.contains("<span>Dark</span>")
+                    && body.contains("<span>System</span>")
+                    && !body.contains("THEME:")
+                    && !body.contains(r#"id="theme-label""#),
+                "{path} carries the labelled appearance control: {body}"
+            );
+            let settings_group = body.find("settings-label\">Appearance").expect("an appearance group");
+            let close = body.find("data-settings-close").expect("a close control");
+            assert!(
+                dialog < settings_group && dialog < close,
+                "{path} keeps the appearance control inside the dialog: {body}"
+            );
+            assert!(
+                !body[..dialog].contains("data-theme-choice"),
+                "{path} keeps the appearance controls out of the header: {body}"
+            );
+            // The width control is a range inside the dialog with a name and a
+            // spoken value, beside a visible readout and its end labels
+            // (design D5).
+            assert!(
+                body.contains(r#"type="range""#)
+                    && body.contains(r#"aria-label="Page width""#)
+                    && body.contains(r#"aria-valuetext="55% of the window""#)
+                    && body.contains(r#"id="width-value""#)
+                    && body.contains(">40%<")
+                    && body.contains(">100%<"),
+                "{path} carries the page-width control: {body}"
+            );
+            let width_control = body.find(r#"id="page-width""#).expect("the width control");
+            assert!(
+                dialog < width_control,
+                "{path} keeps the width control inside the dialog: {body}"
             );
             let csp = header_value(&raw, "content-security-policy").expect("a CSP header");
+            // One documented relaxation, for styles only, because Mermaid
+            // writes its SVG's styling inline (design D2); script stays
+            // same-origin and inline-free on every screen.
             assert_eq!(
                 csp,
-                "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+                "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'",
                 "{path} carries the tightened policy"
             );
-            assert!(!csp.contains("unsafe-inline"), "{path}: {csp}");
+            let directives: std::collections::HashMap<&str, &str> = csp
+                .split(';')
+                .filter_map(|directive| directive.trim().split_once(' '))
+                .collect();
+            assert_eq!(
+                directives.get("script-src"),
+                Some(&"'self'"),
+                "{path} allows script only from this origin: {csp}"
+            );
+            assert_eq!(
+                directives.get("connect-src"),
+                Some(&"'self'"),
+                "{path} connects only to this origin: {csp}"
+            );
+            assert_eq!(
+                directives.get("default-src"),
+                Some(&"'none'"),
+                "{path} allows nothing by default: {csp}"
+            );
+            assert!(
+                !csp.contains("unsafe-eval") && !csp.contains("script-src 'self' 'unsafe-inline'"),
+                "{path} must not execute inline or evaluated script: {csp}"
+            );
             assert_eq!(
                 header_value(&raw, "cache-control").as_deref(),
                 Some("no-cache"),
@@ -771,7 +867,8 @@ mod tests {
         for (path, content_type) in [
             ("/app.css", "text/css"),
             ("/app.js", "text/javascript"),
-            ("/theme.js", "text/javascript"),
+            ("/prefs.js", "text/javascript"),
+            ("/mermaid.js", "text/javascript"),
         ] {
             let raw = raw_get(port, path);
             let (status, _, body) = split_response(&raw);
@@ -788,6 +885,20 @@ mod tests {
             );
             assert!(!body.is_empty(), "{path} has content");
         }
+
+        // The diagram renderer is the vendored bundle, not a stub: it is
+        // large and exposes the global the client uses (design D1).
+        let (status, bundle) = http_get(port, "/mermaid.js");
+        assert_eq!(status, 200, "{}", &bundle[..bundle.len().min(80)]);
+        assert!(
+            bundle.len() > 1_000_000,
+            "the embedded Mermaid bundle, got {} bytes",
+            bundle.len()
+        );
+        assert!(
+            bundle.contains(r#"globalThis["mermaid"]"#),
+            "the bundle exposes the mermaid global"
+        );
 
         // The stylesheet carries both palettes: the system preference, and the
         // explicit choices the header control sets on the root element

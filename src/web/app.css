@@ -24,9 +24,18 @@
   --active-ink: #ffffff;
   --focus: #0b62d6;
   --radius: 0;
+  /* The dialog scrim, translucent so the shell reflow stays readable behind it
+     (design D4); per-appearance, since one scrim cannot dim both palettes. */
+  --scrim: rgba(31, 41, 55, 0.38);
+  /* The shell width as a percentage of the window, written by prefs.js and
+     the settings dialog's range control; the clamp on `body` keeps it inside
+     [40rem, 100%] (design D5). */
+  --shell: 55;
+  /* The longest line of rendered prose, whatever the shell width is. */
+  --prose-measure: 120ch;
 }
 
-/* Follow the system preference while no explicit choice is stored: theme.js
+/* Follow the system preference while no explicit choice is stored: prefs.js
    removes `data-theme` for "System", so this block is the no-choice state. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
@@ -48,10 +57,11 @@
     --active-ink: #0a0e14;
     --focus: #6aa8ff;
     --radius: 0;
+    --scrim: rgba(0, 0, 0, 0.62);
   }
 }
 
-/* Explicit choices from the header control, applied by theme.js before the
+/* Explicit choices from the settings dialog, applied by prefs.js before the
    body paints and by app.js on click. These copies repeat the palettes above. */
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -72,6 +82,7 @@
   --active-ink: #0a0e14;
   --focus: #6aa8ff;
   --radius: 0;
+  --scrim: rgba(0, 0, 0, 0.62);
 }
 
 :root[data-theme="light"] {
@@ -93,6 +104,7 @@
   --active-ink: #ffffff;
   --focus: #0b62d6;
   --radius: 0;
+  --scrim: rgba(31, 41, 55, 0.38);
 }
 
 * { box-sizing: border-box; }
@@ -103,7 +115,9 @@ body {
   font-size: 0.875rem;
   line-height: 1.6;
   margin: 0 auto;
-  max-width: 56rem;
+  /* The shell is a share of the window (design D5), never narrower than the
+     width the row grids need, and never wider than the window allows. */
+  max-width: clamp(40rem, calc(var(--shell) * 1vw), 100%);
   padding: 1.25rem 1rem 3rem;
   color: var(--ink);
   background: var(--page);
@@ -153,36 +167,186 @@ a:focus-visible, button:focus-visible {
   border-color: var(--accent);
 }
 
-/* The appearance control sits at the end of the header and wraps with it on
-   narrow screens: a status readout beside a three-segment icon control. */
-.appearance {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  margin-left: auto;
-}
-
-.theme-label {
-  font-size: 0.7rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.theme-control { display: flex; border: 1px solid var(--rule); }
-.theme-control button {
+/* The header ends with one settings button. The two controls it opens live in
+   the dialog below, so the header is navigation only (design D1). */
+.settings-open {
   display: grid;
   place-items: center;
   width: 1.85rem;
   height: 1.7rem;
+  margin-left: auto;
   padding: 0;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.settings-open:hover { background: var(--panel-alt); color: var(--ink); }
+.settings-open svg { width: 1rem; height: 1rem; display: block; }
+
+/* The settings dialog (design D1, D2): a native modal centred on the viewport,
+   independent of the shell width, square like the rest of the viewer. */
+.settings {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  width: min(21rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 0;
+  border: 1px solid var(--rule-strong);
+  background: var(--panel);
+  color: var(--ink);
+}
+/* Translucent so the page reflowing behind the dialog is the width preview
+   (design D4). */
+.settings::backdrop { background: var(--scrim); }
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--rule-strong);
+}
+.settings-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.settings-close {
+  padding: 0;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.settings-close:hover { color: var(--ink); }
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.55rem 0.55rem 0.15rem;
+}
+.settings-section { margin: 0; padding: 0; border: 0; min-width: 0; }
+.settings-section > legend { padding: 0; }
+.settings-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.62rem;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  padding: 0.4rem 0.55rem;
+  border-top: 1px solid var(--rule);
+}
+.settings-note { font-size: 0.62rem; color: var(--muted); }
+.settings-done {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.settings-done:hover { background: var(--panel-alt); }
+
+/* The page-width control (design D5): a native range restyled square to match
+   the shell - a 1px track rule on the panel shade, an accent thumb, no
+   rounding. It spans the dialog, so the value is a usable distance to drag
+   rather than a few pixels per step. */
+.width-control {
+  width: 100%;
+  height: 1.2rem;
+  margin: 0.1rem 0 0.25rem;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.width-control::-webkit-slider-runnable-track {
+  height: 0.5rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--panel);
+}
+.width-control::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 0.45rem;
+  height: 1.1rem;
+  margin-top: calc((0.5rem - 1.1rem) / 2);
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+}
+.width-control::-moz-range-track {
+  height: 0.5rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--panel);
+}
+.width-control::-moz-range-thumb {
+  width: 0.45rem;
+  height: 1.1rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+}
+.width-control:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.width-scale {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.6rem;
+  color: var(--muted);
+}
+.width-scale .width-value { color: var(--ink); }
+
+.theme-control { display: flex; border: 1px solid var(--rule); }
+.settings .theme-control { border-color: var(--rule-strong); }
+.theme-control button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0 0.4rem;
   border: 0;
   border-left: 1px solid var(--rule);
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
 }
+.settings .theme-control button { flex: 1; height: 1.6rem; }
+.settings .theme-control button span { line-height: 1; }
 .theme-control button:first-child { border-left: 0; }
 .theme-control button:hover { background: var(--panel-alt); color: var(--ink); }
 .theme-control button[aria-pressed="true"] {
@@ -468,8 +632,17 @@ h2 {
   padding: 1.25rem;
   margin: 0.6rem 0 1.5rem;
   line-height: 1.75;
+  /* A table cannot shrink below its columns' minimum, so on a deliberately
+     narrow shell it scrolls inside the panel instead of escaping it (D7). */
+  overflow-x: auto;
 }
-.file-body > * { max-width: 76ch; }
+.file-body > * { max-width: min(var(--prose-measure), 100%); }
+/* Code, tables and images are the elements that actually profit from a wide
+   shell, so they leave the prose measure (design D7). */
+.file-body > pre,
+.file-body > table,
+.file-body > img,
+.file-body > hr { max-width: 100%; }
 .file-body h1, .file-body h2, .file-body h3,
 .file-body h4, .file-body h5, .file-body h6 {
   line-height: 1.3;
@@ -547,11 +720,37 @@ h2 {
 .file-body hr { border: 0; border-top: 1px solid var(--rule); margin: 1.5em 0; }
 .file-body img { max-width: 100%; }
 
+/* A drawn diagram (design D6): framed like the rest of the sheet, and
+   scrollable sideways once shrinking to the shell would make its labels
+   illegible. Like code and tables it may use the full shell, not the prose
+   measure. */
+.file-body > .diagram { max-width: 100%; }
+.diagram {
+  margin: 0 0 1em;
+  padding: 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--page);
+  overflow-x: auto;
+}
+.diagram svg {
+  display: block;
+  margin: 0 auto;
+  height: auto;
+  max-width: 100%;
+  min-width: 34rem;
+}
+/* The fallback note sits under the block whose source stays visible. */
+.diagram-error {
+  margin: -0.25rem 0 1em;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 /* ---------------------------------------------------------------- narrow -- */
 
 @media (max-width: 40rem) {
   body { padding: 0.9rem 0.6rem 2rem; }
-  .appearance { margin-left: auto; }
 
   .screen-head { flex-wrap: wrap; }
   .screen-meta { margin-left: 0; }
@@ -566,6 +765,7 @@ h2 {
   .file-bar { flex-wrap: wrap; }
   .file-bar .versions { max-width: 100%; width: 100%; margin-left: 0; }
   .file-body { padding: 0.85rem; }
+  .diagram { padding: 0.5rem; }
   .file-body table { table-layout: fixed; width: 100%; }
   .file-body table th { white-space: normal; }
 }

@@ -51,4 +51,29 @@ mod tests {
         assert!(!html.contains("<img"), "no live inline HTML: {html}");
         assert!(html.contains("&lt;img"), "escaped to text: {html}");
     }
+
+    #[test]
+    fn fenced_mermaid_blocks_keep_the_client_hook_and_escape_source() {
+        let html = render("```mermaid\nflowchart LR\n  A[<script>alert(1)</script>] --> B\n```\n");
+        assert!(
+            html.contains(r#"<pre><code class="language-mermaid">"#),
+            "the client finds diagrams by this class: {html}"
+        );
+        assert!(
+            html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+            "diagram source is text, not markup: {html}"
+        );
+        assert!(!html.contains("<script"), "no live tag anywhere: {html}");
+    }
+
+    #[test]
+    fn other_fences_keep_their_own_language_class() {
+        let html = render("```rust\nfn main() {}\n```\n");
+        assert!(
+            html.contains(r#"<pre><code class="language-rust">"#),
+            "{html}"
+        );
+        assert!(!html.contains("language-mermaid"), "{html}");
+        assert!(html.contains("fn main() {}"), "{html}");
+    }
 }

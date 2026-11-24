@@ -26,7 +26,12 @@ var state = {
   filesCount: null,
   reader: null,
   readerBody: null,
-  readerLines: null
+  readerLines: null,
+  // The diagrams drawn in the Reader body, so an appearance change can redraw
+  // them from their sources; the token drops draws that a screen change or a
+  // new file overtook (design D4).
+  diagrams: [],
+  diagramsToken: 0
 };
 
 // --------------------------------------------------------------- notices --
@@ -91,13 +96,71 @@ function filterHint() {
   return hint;
 }
 
+// --------------------------------------------------------------- settings --
+
+// The settings dialog (design D1, D2): one home for the appearance choice and
+// the page width. Both settings apply live, so the dialog only opens and
+// closes - there is nothing to commit and nothing to cancel (design D4).
+var settingsDialog = document.getElementById("settings");
+var settingsOpen = document.getElementById("settings-open");
+
+function closeSettings() {
+  if (!settingsDialog) {
+    return;
+  }
+  if (typeof settingsDialog.close === "function") {
+    settingsDialog.close();
+  } else {
+    // Without the platform method there is no `close` event, so focus returns
+    // here instead (design D2).
+    settingsDialog.removeAttribute("open");
+    settingsOpen.focus();
+  }
+}
+
+if (settingsDialog && settingsOpen) {
+  settingsOpen.addEventListener("click", function () {
+    if (typeof settingsDialog.showModal === "function") {
+      settingsDialog.showModal();
+    } else {
+      settingsDialog.setAttribute("open", "");
+    }
+  });
+
+  settingsDialog.addEventListener("click", function (event) {
+    if (event.target.closest("[data-settings-close]")) {
+      closeSettings();
+      return;
+    }
+    // The backdrop belongs to the dialog, so a click outside the panel arrives
+    // here with the dialog as its target. Compare coordinates rather than the
+    // target so clicks on the dialog's own padding do not count as outside.
+    var bounds = settingsDialog.getBoundingClientRect();
+    var outside =
+      event.clientX < bounds.left ||
+      event.clientX > bounds.right ||
+      event.clientY < bounds.top ||
+      event.clientY > bounds.bottom;
+    if (outside) {
+      closeSettings();
+    }
+  });
+
+  // Escape closes a native dialog and fires the same event, so focus returns to
+  // the control that opened it however the dialog was dismissed (design D2).
+  settingsDialog.addEventListener("close", function () {
+    settingsOpen.focus();
+  });
+}
+
 // ------------------------------------------------------------- appearance --
 
-// The appearance control (design D4, D5). theme.js already put the stored
-// choice on <html> before the body painted; this keeps the header marked and
-// records new choices. Choosing an appearance is a pure CSS change, so the
-// visible screen - its filters, its scroll position, the Reader's version - is
-// never rebuilt.
+// The appearance control (design D3). prefs.js already put the stored
+// choice on <html> before the body painted; this keeps the dialog's segments
+// marked and records new choices. Choosing an appearance is a pure CSS change,
+// so the visible screen - its filters, its scroll position, the Reader's
+// version - is never rebuilt. The no-choice state needs no listener: the
+// stylesheet follows the system preference through its media query.
 var THEME_KEY = "memorija.theme";
 
 // The stored choice, or "system" when none was made (the key is absent) or the
@@ -111,28 +174,11 @@ function storedTheme() {
   }
 }
 
-// The appearance actually in effect: the explicit choice when one is set,
-// otherwise the operating system's preference (design D3).
-function effectiveAppearance() {
-  var explicit = document.documentElement.getAttribute("data-theme");
-  if (explicit === "light" || explicit === "dark") {
-    return explicit;
-  }
-  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    return "dark";
-  }
-  return "light";
-}
-
 function markAppearance(choice) {
   var buttons = document.querySelectorAll("[data-theme-choice]");
   for (var i = 0; i < buttons.length; i++) {
     var pressed = buttons[i].dataset.themeChoice === choice;
     buttons[i].setAttribute("aria-pressed", pressed ? "true" : "false");
-  }
-  var label = document.getElementById("theme-label");
-  if (label) {
-    label.textContent = "THEME:" + effectiveAppearance().toUpperCase();
   }
 }
 
@@ -145,6 +191,9 @@ function applyAppearance(choice) {
     document.documentElement.removeAttribute("data-theme");
   }
   markAppearance(choice);
+  // Diagrams carry colours of their own, so they are redrawn for the new
+  // palette; everything else is pure CSS and is left alone (design D4).
+  redrawDiagrams();
 }
 
 // Persist the choice for later visits. A throwing or unavailable store must not
@@ -161,7 +210,7 @@ function storeAppearance(choice) {
   }
 }
 
-var appearanceControl = document.querySelector(".appearance");
+var appearanceControl = document.getElementById("settings");
 if (appearanceControl) {
   appearanceControl.addEventListener("click", function (event) {
     var button = event.target.closest("[data-theme-choice]");
@@ -172,20 +221,380 @@ if (appearanceControl) {
     applyAppearance(button.dataset.themeChoice);
   });
   applyAppearance(storedTheme());
+}
 
-  // While System is the choice, the readout follows the operating system
-  // without a reload; an explicit choice ignores this listener (design D3).
-  if (window.matchMedia) {
-    var scheme = window.matchMedia("(prefers-color-scheme: dark)");
-    var followSystem = function () {
-      markAppearance(storedTheme());
-    };
-    if (scheme.addEventListener) {
-      scheme.addEventListener("change", followSystem);
-    } else if (scheme.addListener) {
-      scheme.addListener(followSystem);
+// ------------------------------------------------------------- page width --
+
+// The page-width control (design D5): the shell reads `--shell` as a percentage
+// of the window, so dragging writes that one custom property and nothing else -
+// no screen is rebuilt, and filters, scroll position and the open file survive.
+// The value is persisted when the drag ends, not on every intermediate value.
+var WIDTH_KEY = "memorija.width";
+var WIDTH_MIN = 40;
+var WIDTH_MAX = 100;
+var WIDTH_DEFAULT = 55;
+
+var widthControl = document.getElementById("page-width");
+var widthValue = document.getElementById("width-value");
+
+function clampWidth(value) {
+  return Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, value));
+}
+
+// The width in effect: the stylesheet's `--shell`, which prefs.js already set
+// from the stored choice before the body painted. Reading it back keeps the
+// control honest about what is on screen.
+function currentWidth() {
+  var parsed = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--shell"), 10);
+  return isNaN(parsed) ? WIDTH_DEFAULT : clampWidth(parsed);
+}
+
+function showWidth(width) {
+  var text = width + "% of the window";
+  if (widthValue) {
+    widthValue.textContent = text;
+  }
+  if (widthControl) {
+    widthControl.setAttribute("aria-valuetext", text);
+  }
+}
+
+function applyWidth(width) {
+  document.documentElement.style.setProperty("--shell", String(width));
+  showWidth(width);
+}
+
+// A throwing or unavailable store must not break the page (design D4): the
+// width still applies until the next load.
+function storeWidth(width) {
+  try {
+    window.localStorage.setItem(WIDTH_KEY, String(width));
+  } catch (error) {
+    // Storage unavailable: the width lasts for the current page only.
+  }
+}
+
+if (widthControl) {
+  var initialWidth = currentWidth();
+  widthControl.value = String(initialWidth);
+  showWidth(initialWidth);
+
+  widthControl.addEventListener("input", function () {
+    applyWidth(clampWidth(parseInt(widthControl.value, 10)));
+  });
+  widthControl.addEventListener("change", function () {
+    storeWidth(clampWidth(parseInt(widthControl.value, 10)));
+  });
+}
+
+// ---------------------------------------------------------------- diagrams --
+
+// The Reader draws fenced ```mermaid blocks with a vendored Mermaid build
+// served from this origin (design D1), fetched only once a rendered file is
+// known to contain a diagram (design D5). The source block is never removed
+// before its diagram draws, so any failure - an invalid diagram, an
+// unreachable renderer - falls back to the source the server already rendered.
+var MERMAID_ADDRESS = "/mermaid.js";
+var MERMAID_FONT =
+  "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+var mermaidLoading = null;
+var diagramCounter = 0;
+
+function diagramId() {
+  diagramCounter += 1;
+  return "memorija-diagram-" + diagramCounter;
+}
+
+// One promise for one script element: a second diagram in the same file, or
+// the same diagram after a redraw, reuses it. A failed load clears the memo so
+// a later navigation can try again.
+function ensureMermaid() {
+  if (window.mermaid) {
+    return Promise.resolve(window.mermaid);
+  }
+  if (!mermaidLoading) {
+    mermaidLoading = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = MERMAID_ADDRESS;
+      script.async = true;
+      script.addEventListener("load", function () {
+        if (window.mermaid) {
+          resolve(window.mermaid);
+        } else {
+          reject(new Error("the diagram renderer did not start"));
+        }
+      });
+      script.addEventListener("error", function () {
+        mermaidLoading = null;
+        reject(new Error("the diagram renderer could not be loaded"));
+      });
+      document.body.appendChild(script);
+    });
+  }
+  return mermaidLoading;
+}
+
+// A token from the appearance in effect, or a neutral fallback for the case
+// where the stylesheet could not resolve it. Hex tokens are what Mermaid's
+// theme variables expect.
+function diagramToken(styles, name, fallback) {
+  var value = styles.getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+// The Mermaid configuration for the palette the stylesheet already resolved:
+// `base` plus the viewer's own tokens, so diagrams belong to the same theme as
+// the page (design D4). `strict` keeps Mermaid's sanitising and its `click`
+// handling off, and SVG text labels keep HTML and foreignObject out of the
+// drawn result (spec: diagram content cannot run code).
+function diagramConfig() {
+  var styles = getComputedStyle(document.documentElement);
+  var page = diagramToken(styles, "--page", "#ffffff");
+  var panel = diagramToken(styles, "--panel", "#f4f4f4");
+  var panelAlt = diagramToken(styles, "--panel-alt", "#e9e9e9");
+  var rule = diagramToken(styles, "--rule", "#cccccc");
+  var ink = diagramToken(styles, "--ink", "#111111");
+  var muted = diagramToken(styles, "--muted", "#555555");
+  var accent = diagramToken(styles, "--accent", "#0b62d6");
+  var onAccent = diagramToken(styles, "--on-accent", "#ffffff");
+  var codeBg = diagramToken(styles, "--code-bg", "#eeeeee");
+  var codeInk = diagramToken(styles, "--code-ink", "#8a5a00");
+  return {
+    startOnLoad: false,
+    securityLevel: "strict",
+    htmlLabels: false,
+    theme: "base",
+    fontFamily: MERMAID_FONT,
+    themeVariables: {
+      fontFamily: MERMAID_FONT,
+      background: page,
+      primaryColor: panel,
+      primaryTextColor: ink,
+      primaryBorderColor: rule,
+      secondaryColor: panelAlt,
+      secondaryTextColor: ink,
+      secondaryBorderColor: rule,
+      tertiaryColor: codeBg,
+      tertiaryTextColor: codeInk,
+      tertiaryBorderColor: rule,
+      mainBkg: panel,
+      nodeBorder: rule,
+      nodeTextColor: ink,
+      clusterBkg: panelAlt,
+      clusterBorder: rule,
+      lineColor: muted,
+      textColor: ink,
+      edgeLabelBackground: page,
+      titleColor: ink,
+      noteBkgColor: codeBg,
+      noteTextColor: codeInk,
+      noteBorderColor: rule,
+      actorBkg: panel,
+      actorBorder: rule,
+      actorTextColor: ink,
+      actorLineColor: rule,
+      signalColor: ink,
+      signalTextColor: ink,
+      labelBoxBkgColor: panel,
+      labelBoxBorderColor: rule,
+      labelTextColor: ink,
+      loopTextColor: ink,
+      activationBkgColor: panelAlt,
+      activationBorderColor: rule,
+      sequenceNumberColor: onAccent,
+      pieTitleTextColor: ink,
+      pieSectionTextColor: ink,
+      pie1: accent,
+      pie2: panelAlt,
+      pie3: codeBg,
+      pie4: muted,
+      pie5: rule,
+      pie6: panel,
+      pieStrokeColor: page,
+      pieOpacity: "1"
+    }
+  };
+}
+
+// Mermaid's SVG is data: a diagram's `click` directives can put links into it,
+// and the viewer must not make them live. The string is parsed into an inert
+// `<template>`, anchors are unwrapped (keeping their text), and scripts or
+// embedded content are dropped before the SVG reaches the document (spec:
+// diagram content cannot run code or reach the network). Mermaid's own
+// `<style>` element stays - that is the one inline style the CSP allows.
+function diagramSvg(markup) {
+  var template = document.createElement("template");
+  template.innerHTML = markup;
+  var svg = template.content.querySelector("svg");
+  if (!svg) {
+    return null;
+  }
+
+  var forbidden = svg.querySelectorAll("script, foreignObject, iframe, object, embed");
+  for (var i = 0; i < forbidden.length; i++) {
+    forbidden[i].parentNode.removeChild(forbidden[i]);
+  }
+
+  var anchors = svg.querySelectorAll("a");
+  for (var j = 0; j < anchors.length; j++) {
+    var anchor = anchors[j];
+    while (anchor.firstChild) {
+      anchor.parentNode.insertBefore(anchor.firstChild, anchor);
+    }
+    anchor.parentNode.removeChild(anchor);
+  }
+
+  var nodes = svg.querySelectorAll("*");
+  for (var k = 0; k < nodes.length; k++) {
+    var attributes = nodes[k].attributes;
+    for (var a = attributes.length - 1; a >= 0; a--) {
+      if (attributes[a].name.toLowerCase().indexOf("on") === 0) {
+        nodes[k].removeAttribute(attributes[a].name);
+      }
     }
   }
+  return svg;
+}
+
+// A temporary node Mermaid creates for a draw is removed again when the draw
+// rejects, so a failed diagram leaves nothing behind.
+function removeDiagramScratch(id) {
+  ["d" + id, id].forEach(function (candidate) {
+    var node = document.getElementById(candidate);
+    if (node && node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+  });
+}
+
+// Note a block as not drawn. The source block stays where the server put it,
+// and the note is added once per block (design D3).
+function markDiagramFailed(block) {
+  if (!block || !block.parentNode) {
+    return;
+  }
+  if (block.nextSibling && block.nextSibling.className === "diagram-error") {
+    return;
+  }
+  var note = element(
+    "p",
+    "diagram-error",
+    "This diagram could not be drawn; its source is shown above."
+  );
+  block.parentNode.insertBefore(note, block.nextSibling);
+}
+
+// Draw one block into a figure and swap it in only on success. A failure
+// leaves the source block exactly as rendered plus the note.
+function drawDiagram(mermaid, entry, token) {
+  var id = diagramId();
+  return mermaid.render(id, entry.source).then(
+    function (result) {
+      var svg = diagramSvg(result.svg);
+      if (state.diagramsToken !== token || !svg) {
+        return;
+      }
+      var figure = element("figure", "diagram");
+      figure.appendChild(svg);
+      figure.setAttribute("role", "img");
+      figure.setAttribute("aria-label", "Diagram");
+      entry.block.parentNode.replaceChild(figure, entry.block);
+      state.diagrams.push({ source: entry.source, figure: figure });
+    },
+    function () {
+      removeDiagramScratch(id);
+      if (state.diagramsToken === token) {
+        markDiagramFailed(entry.block);
+      }
+    }
+  );
+}
+
+// Draw every mermaid block in a freshly rendered Reader body, one at a time so
+// a slow diagram does not starve the others and each failure stays its own.
+function renderDiagrams(body) {
+  var blocks = body.querySelectorAll("pre > code.language-mermaid");
+  if (blocks.length === 0) {
+    return;
+  }
+  var pending = [];
+  for (var i = 0; i < blocks.length; i++) {
+    pending.push({ source: blocks[i].textContent, block: blocks[i].parentNode });
+  }
+  var token = state.diagramsToken;
+  ensureMermaid().then(
+    function (mermaid) {
+      mermaid.initialize(diagramConfig());
+      var index = 0;
+      function next() {
+        if (index >= pending.length || state.diagramsToken !== token) {
+          return null;
+        }
+        var entry = pending[index];
+        index += 1;
+        return drawDiagram(mermaid, entry, token).then(next);
+      }
+      next();
+    },
+    function () {
+      // No renderer: every block keeps its source and says so.
+      pending.forEach(function (entry) {
+        if (state.diagramsToken === token) {
+          markDiagramFailed(entry.block);
+        }
+      });
+    }
+  );
+}
+
+// Redraw the diagrams already on screen for the appearance now in effect. Only
+// the SVG inside each figure is replaced, so the file, version, scroll and the
+// open settings dialog stay as they were (design D4). A redraw that fails
+// keeps the previous drawing rather than trading a diagram for a note.
+function redrawDiagrams() {
+  var mermaid = window.mermaid;
+  var entries = state.diagrams;
+  if (!mermaid || entries.length === 0) {
+    return;
+  }
+  mermaid.initialize(diagramConfig());
+  var token = state.diagramsToken;
+  var index = 0;
+  function next() {
+    if (index >= entries.length || state.diagramsToken !== token) {
+      return null;
+    }
+    var entry = entries[index];
+    index += 1;
+    var id = diagramId();
+    return mermaid.render(id, entry.source).then(
+      function (result) {
+        var svg = diagramSvg(result.svg);
+        if (state.diagramsToken === token && svg && entry.figure.parentNode) {
+          entry.figure.textContent = "";
+          entry.figure.appendChild(svg);
+        }
+      },
+      function () {
+        removeDiagramScratch(id);
+      }
+    ).then(next);
+  }
+  next();
+}
+
+// With no explicit choice the stylesheet follows the system preference, so a
+// flip there changes the palette too; the media query report redraws the
+// diagrams that are on screen. An explicit choice wins and needs no listener.
+var systemAppearance = window.matchMedia
+  ? window.matchMedia("(prefers-color-scheme: dark)")
+  : null;
+if (systemAppearance && systemAppearance.addEventListener) {
+  systemAppearance.addEventListener("change", function () {
+    if (!document.documentElement.hasAttribute("data-theme")) {
+      redrawDiagrams();
+    }
+  });
 }
 
 // ---------------------------------------------------------------- routing --
@@ -255,6 +664,10 @@ function render() {
   state.readerLines = null;
   state.readerOffered = null;
   state.readerUpdateBanner = null;
+  // Drop the previous screen's diagrams: a draw still in flight must not land
+  // on the new screen (design D4).
+  state.diagrams = [];
+  state.diagramsToken += 1;
   hideNewChanges();
   screen.textContent = "";
   switch (state.route.name) {
@@ -857,10 +1270,14 @@ function renderReaderData(result) {
   }
 
   var body = element("div", "file-body");
-  // The only innerHTML assignment: the server rendered and escaped the
-  // markdown, and this is the existing trust boundary (design D7).
+  // The server rendered and escaped this markdown; this assignment and the
+  // inert `<template>` parse in `diagramSvg` are the only innerHTML uses, and
+  // the existing trust boundary (design D3).
   body.innerHTML = data.html;
   slot.appendChild(body);
+  state.diagrams = [];
+  state.diagramsToken += 1;
+  renderDiagrams(body);
 }
 
 // The file bar: identity on the left, the version tabs on the right. HEAD is

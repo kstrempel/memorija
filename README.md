@@ -25,7 +25,8 @@ back up or edit by hand.
   `..` traversal and symlinks that lead outside are refused.
 - **Web viewer** — `memorija web` opens a local, read-only viewer with three
   screens: a live Changes feed, a Files index with per-file metadata, and a
-  Reader that can show any recorded version. It updates itself.
+  Reader that can show any recorded version. It renders markdown, including
+  Mermaid diagrams, and updates itself.
 - **Two transports** — stdio for locally launched clients, Streamable HTTP for
   shared or remote connections.
 - **Tool-level errors** — recoverable failures come back as `isError` results
@@ -111,15 +112,23 @@ and the version store, and never creates or seeds either. It uses a monospace,
 square-edged terminal layout; the `/` key focuses the path filter on the
 Changes and Files screens, and `Escape` releases it.
 
-The viewer follows your system's light or dark appearance. In the header, a
-`THEME:` readout names the appearance in effect beside three icon controls
-(sun, moon, monitor) for **Light**, **Dark**, and **System**. The explicit
-choice is remembered in the browser (a `localStorage` entry, scoped to the
-viewer's address, so a different port or host starts from the system preference
-again) and is never sent to the server. Choosing **System** returns to the
-operating system preference, and the open page follows it without a reload;
-the readout keeps naming the appearance in effect while System is selected.
-Changing the appearance never touches a memory file or version record.
+The viewer follows your system's light or dark appearance, and how wide the page
+is on your screen is yours to set. Both live in one settings dialog: the gear at
+the right of the header opens it, and it holds the three appearance choices —
+**Light**, **Dark**, and **System**, as labelled segments — and a page-width
+slider that runs from a comfortable minimum to the full width of the window.
+Everything applies immediately, so the page reflows behind the dialog as you
+drag; the dialog itself only opens and closes. `Escape`, a click outside it, or
+**Close** dismisses it and returns focus to the gear.
+
+Both choices are remembered in the browser (two `localStorage` entries scoped to
+the viewer's address, so a different port or host starts from the defaults
+again) and are never sent to the server. A remembered width is applied before
+the page paints, so it never shows at another width first. Choosing **System**
+returns to the operating system preference, and an open page follows it without
+a reload. Rendered files keep a readable line length however wide the shell
+gets, while change and file rows, code blocks, and tables use the room. Neither
+setting touches a memory file or version record.
 
 The header navigates three screens, each at its own address:
 
@@ -138,7 +147,9 @@ The header navigates three screens, each at its own address:
   recorded versions as links, ending in `HEAD` (the current content); a past
   version is marked as historical with a return to the latest. Without
   `version`, the current content is shown. Files with no recorded versions
-  show just their content.
+  show just their content. A fenced ` ```mermaid ` block is drawn as a
+  diagram in the appearance in effect, and redrawn when you change it; an
+  invalid diagram leaves its source visible with a note instead.
 
 Old `/?path=<file>` bookmarks still resolve to the same Reader view. An
 unknown address shows a not-found screen with a way back.
@@ -153,7 +164,9 @@ you are reading.
 Requesting a path that does not exist shows a clear not-found screen; paths
 that escape the memory root (by `..` traversal or a symlink pointing outside)
 are refused, exactly as in the CLI and MCP surfaces. Rendered markdown never
-executes scripts: HTML inside a memory file displays as text.
+executes scripts: HTML inside a memory file displays as text, and a diagram's
+source is treated as data — its labels stay text and its links and directives
+are not made live.
 
 ## The memory tool
 
@@ -201,15 +214,34 @@ cargo test
 ```
 
 The web viewer ships no front-end build step: `src/web/index.html`,
-`app.css`, `theme.js`, and `app.js` are embedded in the binary, served from the
-same origin with `Cache-Control: no-cache`, and constrained by a strict CSP
-(`'self'` for scripts, styles, and connections — no inline code). `theme.js` is
-a tiny parser-blocking bootstrap in `<head>`: it applies a stored appearance
-choice before the body paints, which is why it exists as its own asset instead
-of an inline script. The terminal appearance lives entirely in `app.css`:
-semantic custom properties (`--page`, `--panel`, `--rule`, `--ink`, `--accent`,
-…) declared once for light and once for dark, repeated for the explicit
-`data-theme` selectors.
+`app.css`, `prefs.js`, and `app.js` are embedded in the binary, served from the
+same origin with `Cache-Control: no-cache`. `prefs.js` is a tiny
+parser-blocking bootstrap in `<head>`: it applies a stored appearance choice
+and page width before the body paints, which is why it exists as its own asset
+instead of an inline script — the width is written to the `--shell` custom
+property through CSSOM, which needs no inline `style` attribute. The terminal
+appearance lives entirely in `app.css`: semantic custom properties (`--page`,
+`--panel`, `--rule`, `--ink`, `--accent`, …) declared once for light and once
+for dark, repeated for the explicit `data-theme` selectors. The shell width is
+`clamp(40rem, calc(var(--shell) * 1vw), 100%)`, so the `40rem` floor keeps the
+row grids intact at any window size. The settings dialog is a native `<dialog>`
+opened with `showModal()`, so modality, the focus trap, `Escape` and the
+backdrop come from the platform rather than from script.
+
+Diagrams come from a vendored Mermaid build,
+`src/web/vendor/mermaid.min.js` (version, checksum and MIT licence are in
+[`src/web/vendor/README.md`](src/web/vendor/README.md)), embedded in the binary
+and served at `/mermaid.js`. The client asks for it only when a rendered file
+contains a ` ```mermaid ` block, draws each block from the escaped source the
+server sent, and leaves the source in place whenever a diagram cannot be
+drawn. The SVG Mermaid returns is scrubbed before it reaches the page (anchors
+unwrapped, scripts and `on*` attributes dropped), so a diagram cannot navigate
+or run code. One CSP exception exists for that drawing: `style-src` allows
+`'unsafe-inline'`, because Mermaid writes its SVG styling as a `<style>` element
+and style attributes; `script-src` stays `'self'` with no inline script and no
+`'unsafe-eval'`, and nothing is fetched from another origin. A diagram upgrade
+must keep those three properties — the commands that check them are in the
+vendor README.
 
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.
