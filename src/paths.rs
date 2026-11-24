@@ -239,6 +239,10 @@ mod tests {
         assert_eq!(key_string(Path::new("")), "");
     }
 
+    // A backslash is a separator on Windows, so the property this pins — a Unix
+    // filename that genuinely contains one stays one segment — can only hold
+    // where the name is a legal single component.
+    #[cfg(unix)]
     #[test]
     fn key_string_keeps_a_backslash_in_a_file_name() {
         // Joining components instead of replacing characters keeps a Unix
