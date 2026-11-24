@@ -19,6 +19,11 @@ every platform while the symlink case is Unix-only. Windows-only verification th
 the full suite on `windows-latest`, and the Windows `USERPROFILE` resolution exercised by the
 released binary.
 
+The first Windows CI run failed as the design anticipated, and on a real portability bug: relative
+memory paths were stringified with `Path::to_string_lossy`, which uses `\` on Windows, so version
+keys, web paths and `list` output differed by platform. `paths::key_string` now joins components
+with `/` everywhere, with unit tests covering nested paths and a name that contains a backslash.
+
 ## 3. CI workflow
 
 - [x] 3.1 Create `.github/workflows/ci.yml` triggered by `push` to `main`, `pull_request`, and `workflow_dispatch`, with `permissions: contents: read` and a `ci-${{ github.ref }}` concurrency group that cancels superseded runs; verify with `python3 -c "import yaml,sys;yaml.safe_load(open('.github/workflows/ci.yml'))"` (or `actionlint`) that the file parses and the triggers and permissions are as described.

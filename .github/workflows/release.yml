@@ -33,7 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
@@ -72,7 +72,7 @@ jobs:
       VERSION: ${{ needs.guard.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
@@ -108,7 +108,7 @@ jobs:
           Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
           Expand-Archive -Path "dist/$stage.zip" -DestinationPath "dist/unpacked-$env:TARGET"
           Get-ChildItem "dist/unpacked-$env:TARGET"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.target }}
           path: |
@@ -124,10 +124,10 @@ jobs:
       VERSION: ${{ needs.guard.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true

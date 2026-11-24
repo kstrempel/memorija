@@ -112,6 +112,29 @@ fn strip_memories_prefix(input: &str) -> &str {
     rest.strip_prefix('/').unwrap_or(rest)
 }
 
+/// Render a path as a key with `/` separators on every platform.
+///
+/// `Path::to_string_lossy` would use `\` on Windows, and that string becomes a
+/// version-store key and a web API path, so it must not vary by platform.
+/// Components are joined rather than characters replaced, so a Unix filename
+/// that genuinely contains a backslash keeps it.
+pub(crate) fn key_string(path: &Path) -> String {
+    let mut out = String::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => out.push('/'),
+            Component::CurDir => {}
+            other => {
+                if !out.is_empty() && !out.ends_with('/') {
+                    out.push('/');
+                }
+                out.push_str(&other.as_os_str().to_string_lossy());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +229,20 @@ mod tests {
             root.canonicalize().unwrap().join("newdir/newfile.txt")
         );
         assert!(!target.is_root);
+    }
+
+    #[test]
+    fn keys_use_forward_slashes_on_every_platform() {
+        let rel = Path::new("projects").join("alpha").join("notes.txt");
+        assert_eq!(key_string(&rel), "projects/alpha/notes.txt");
+        assert_eq!(key_string(Path::new("MEMORY.md")), "MEMORY.md");
+        assert_eq!(key_string(Path::new("")), "");
+    }
+
+    #[test]
+    fn key_string_keeps_a_backslash_in_a_file_name() {
+        // Joining components instead of replacing characters keeps a Unix
+        // filename that contains a backslash intact.
+        assert_eq!(key_string(Path::new("na\\me.txt")), "na\\me.txt");
     }
 }

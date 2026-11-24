@@ -177,9 +177,8 @@ pub(crate) fn walk(dir: &Path, display_root: &Path) -> Result<Vec<(String, Strin
         let entry_path = entry.path();
         let relative = entry_path
             .strip_prefix(display_root)
-            .unwrap_or(&entry_path)
-            .display()
-            .to_string();
+            .map(paths::key_string)
+            .unwrap_or_else(|_| paths::key_string(&entry_path));
         let meta = std::fs::symlink_metadata(&entry_path)
             .map_err(|e| format!("Error: cannot inspect {}: {e}", entry_path.display()))?;
         if meta.is_dir() {
@@ -400,7 +399,7 @@ pub(crate) fn rel_key(root: &Path, target: &paths::Target) -> Result<String, Str
     target
         .path
         .strip_prefix(&canon)
-        .map(|rel| rel.to_string_lossy().into_owned())
+        .map(paths::key_string)
         .map_err(|_| {
             "Error: internal path bookkeeping failed (target outside the memory root)".to_string()
         })
