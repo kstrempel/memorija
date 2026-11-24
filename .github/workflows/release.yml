@@ -1,0 +1,197 @@
+name: Release
+
+# A pushed `v<version>` tag builds and publishes one archive per supported
+# target plus SHA256SUMS (spec: ci-release). The write permission lives here,
+# never on the CI path.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish, for example v0.8.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never abandon a run that may have already uploaded part of a release.
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  guard:
+    name: tag matches crate version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compare the tag with the Cargo.toml version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${TAG#v}"
+          version="$(cargo metadata --no-deps --locked --format-version 1 \
+            | jq -r '.packages[] | select(.name == "memorija") | .version')"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${TAG} does not match the crate version ${version}; bump Cargo.toml and retag"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: guard
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-built on the arm64 runner: the Apple SDK ships both slices.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      # Extracting an archive leaves the binary, README and LICENSE at the top
+      # level, so the archive is usable without a build (spec: release archives).
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="memorija-${VERSION}-${TARGET}"
+          mkdir -p "dist/${stage}"
+          cp "target/${TARGET}/release/memorija" "dist/${stage}/"
+          cp README.md LICENSE "dist/${stage}/"
+          tar -czf "dist/${stage}.tar.gz" -C "dist/${stage}" memorija README.md LICENSE
+          tar -tzf "dist/${stage}.tar.gz"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "memorija-$env:VERSION-$env:TARGET"
+          New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
+          Copy-Item "target/$env:TARGET/release/memorija.exe" "dist/$stage/"
+          Copy-Item README.md, LICENSE "dist/$stage/"
+          # zip, so Windows Explorer extracts it without extra software.
+          Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
+          Expand-Archive -Path "dist/$stage.zip" -DestinationPath "dist/unpacked-$env:TARGET"
+          Get-ChildItem "dist/unpacked-$env:TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/memorija-*.tar.gz
+            dist/memorija-*.zip
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: [guard, build]
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify the archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/memorija-*.tar.gz dist/memorija-*.zip)
+          if [ "${#archives[@]}" -ne 4 ]; then
+            echo "::error::expected 4 archives, found ${#archives[@]}: ${archives[*]}"
+            exit 1
+          fi
+          for archive in dist/memorija-*.tar.gz; do
+            listing="$(tar -tzf "$archive")"
+            for expected in memorija README.md LICENSE; do
+              grep -qx "$expected" <<<"$listing" \
+                || { echo "::error::$archive is missing $expected"; exit 1; }
+            done
+          done
+          for archive in dist/memorija-*.zip; do
+            listing="$(unzip -Z1 "$archive")"
+            for expected in memorija.exe README.md LICENSE; do
+              grep -qx "$expected" <<<"$listing" \
+                || { echo "::error::$archive is missing $expected"; exit 1; }
+            done
+          done
+          # The Linux binary runs on this runner: a smoke test of the artifact
+          # itself, not just the build directory.
+          linux_archive="dist/memorija-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p smoke && tar -xzf "$linux_archive" -C smoke
+          ./smoke/memorija --version
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum memorija-*.tar.gz memorija-*.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Write release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "memorija ${VERSION} — persistent memory files for AI agents."
+            echo
+            echo "Supported targets (one archive each):"
+            for archive in dist/memorija-*.tar.gz dist/memorija-*.zip; do
+              echo "- \`$(basename "$archive")\`"
+            done
+            echo
+            echo "Every archive contains the \`memorija\` binary, \`README.md\` and \`LICENSE\` at its top level."
+            echo "Verify a download against \`SHA256SUMS\`."
+            echo
+            echo "The archives are unsigned: no code signing or notarization is applied."
+            echo "The Linux binary needs glibc 2.35 or newer (built on Ubuntu 22.04)."
+          } > notes.md
+          cat notes.md
+      - name: Create or update the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `gh release view` succeeding means a previous run already created
+          # the release; --clobber then makes this step idempotent.
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "memorija $TAG" --notes-file notes.md
+          gh release upload "$TAG" dist/* --clobber

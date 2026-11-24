@@ -141,10 +141,10 @@ fn root_signal(root: &Path) -> (u64, u128) {
     if let Ok(dir) = std::fs::read_dir(root) {
         for entry in dir.flatten() {
             entries += 1;
-            if let Ok(meta) = entry.metadata() {
-                if let Some(nanos) = mtime_nanos(&meta) {
-                    newest_mtime = newest_mtime.max(nanos);
-                }
+            if let Ok(meta) = entry.metadata()
+                && let Some(nanos) = mtime_nanos(&meta)
+            {
+                newest_mtime = newest_mtime.max(nanos);
             }
         }
     }
@@ -325,7 +325,8 @@ fn asset_response(body: &'static str, content_type: &'static str) -> axum::respo
 async fn fallback(uri: axum::http::Uri) -> axum::response::Response {
     let path = uri.path();
     if path == "/api" || path.starts_with("/api/") {
-        return api_error(StatusCode::NOT_FOUND, format!("No API endpoint at {path}")).into_response();
+        return api_error(StatusCode::NOT_FOUND, format!("No API endpoint at {path}"))
+            .into_response();
     }
     shell().await
 }
@@ -395,8 +396,7 @@ struct FileQuery {
 /// so no content beyond the root is ever read.
 fn file_entries(root: &Path, changes: &[inspect::ChangeRecord]) -> Vec<FileEntry> {
     // The scan is newest first, so the first record per path is the latest.
-    let mut newest: std::collections::HashMap<&str, (u64, &str)> =
-        std::collections::HashMap::new();
+    let mut newest: std::collections::HashMap<&str, (u64, &str)> = std::collections::HashMap::new();
     for change in changes {
         newest
             .entry(change.path.as_str())
@@ -744,9 +744,7 @@ mod tests {
                 "{path} returns the document: {body}"
             );
             assert!(
-                body.contains("/app.css")
-                    && body.contains("/app.js")
-                    && body.contains("/prefs.js"),
+                body.contains("/app.css") && body.contains("/app.js") && body.contains("/prefs.js"),
                 "{path} references the split assets: {body}"
             );
             // The settings control and its dialog are part of the shared shell
@@ -787,7 +785,9 @@ mod tests {
                     && !body.contains(r#"id="theme-label""#),
                 "{path} carries the labelled appearance control: {body}"
             );
-            let settings_group = body.find("settings-label\">Appearance").expect("an appearance group");
+            let settings_group = body
+                .find("settings-label\">Appearance")
+                .expect("an appearance group");
             let close = body.find("data-settings-close").expect("a close control");
             assert!(
                 dialog < settings_group && dialog < close,
@@ -1204,13 +1204,18 @@ mod tests {
         let home = temp_dir("web-file-escape");
         let root = root::root_in(&home);
         std::fs::create_dir_all(&root).unwrap();
-        // A file outside the root and a symlink inside it pointing there.
-        let outside = home.join("secrets.txt");
-        std::fs::write(&outside, "classified\n").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("escape.md")).unwrap();
+        // A file outside the root, reached by traversal everywhere and, on
+        // Unix only, through a symlink inside it (design D8).
+        std::fs::write(home.join("secrets.txt"), "classified\n").unwrap();
+        let mut escaping = vec!["/memories/../secrets.txt", "../secrets.txt"];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(home.join("secrets.txt"), root.join("escape.md")).unwrap();
+            escaping.push("escape.md");
+        }
         let port = spawn_app(root).await;
 
-        for path in ["/memories/../secrets.txt", "../secrets.txt", "escape.md"] {
+        for path in escaping {
             let requested = path.replace(' ', "%20");
             let (status, body) = http_get(port, &format!("/api/file?path={requested}"));
             assert_ne!(status, 200, "{path} must be refused: {body}");
@@ -1279,7 +1284,12 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            ["binary.dat", "notes.md", "projects/alpha/notes.txt", "scratch.md"],
+            [
+                "binary.dat",
+                "notes.md",
+                "projects/alpha/notes.txt",
+                "scratch.md"
+            ],
             "every memory file, sorted, nothing hidden: {json}"
         );
 
@@ -1291,7 +1301,11 @@ mod tests {
 
         // Nested and unrecorded files still carry their line count.
         assert_eq!(files[2]["lines"], 3, "{json}");
-        assert_eq!(files[2]["latest_version"], serde_json::Value::Null, "{json}");
+        assert_eq!(
+            files[2]["latest_version"],
+            serde_json::Value::Null,
+            "{json}"
+        );
         assert_eq!(files[2]["last_changed"], serde_json::Value::Null, "{json}");
         assert_eq!(files[3]["lines"], 1, "{json}");
 
@@ -1310,6 +1324,9 @@ mod tests {
         assert_eq!(body, r#"{"files":[]}"#, "an empty index, not an error");
     }
 
+    // Symlinks are a Unix feature here, so the whole test is Unix-only
+    // (design D8); the traversal half is covered on every platform above.
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread")]
     async fn api_files_never_leaks_content_or_paths_outside_the_root() {
         let home = temp_dir("web-files-escape");
@@ -1337,14 +1354,24 @@ mod tests {
             .iter()
             .map(|f| f["path"].as_str().unwrap())
             .collect();
-        assert_eq!(files, ["escape.md", "links"], "in-root link paths only: {json}");
+        assert_eq!(
+            files,
+            ["escape.md", "links"],
+            "in-root link paths only: {json}"
+        );
         // A symlink's line count is unknown rather than read through.
         for file in json["files"].as_array().unwrap() {
             assert_eq!(file["lines"], serde_json::Value::Null, "{json}");
         }
         assert!(!body.contains("secrets"), "no outside file names: {body}");
-        assert!(!body.contains("elsewhere"), "no outside directory names: {body}");
-        assert!(!body.contains("deep.md"), "no paths from beyond the root: {body}");
+        assert!(
+            !body.contains("elsewhere"),
+            "no outside directory names: {body}"
+        );
+        assert!(
+            !body.contains("deep.md"),
+            "no paths from beyond the root: {body}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

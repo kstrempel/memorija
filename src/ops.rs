@@ -66,7 +66,7 @@ fn view(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String> 
 
     if meta.is_dir() {
         // `view_range` is ignored for directory listings.
-        return list_dir(root, &target.path, &args.path);
+        return list_dir(&target.path, &args.path);
     }
 
     let content = std::fs::read_to_string(&target.path)
@@ -105,10 +105,10 @@ pub(crate) fn record_at(
 ) -> Result<versions::Record, String> {
     let rel = rel_key(root, target)?;
     let records = versions::read(store, &rel)?;
-    if version >= 1 {
-        if let Some(record) = records.iter().find(|record| record.seq == version as u64) {
-            return Ok(record.clone());
-        }
+    if version >= 1
+        && let Some(record) = records.iter().find(|record| record.seq == version as u64)
+    {
+        return Ok(record.clone());
     }
     match records.last() {
         None => Err(format!("Error: {display} has no recorded versions")),
@@ -150,9 +150,9 @@ fn view_file(display: &str, content: &str, range: Option<[i64; 2]>) -> Result<St
     Ok(out)
 }
 
-fn list_dir(root: &Path, path: &Path, display: &str) -> Result<String, String> {
+fn list_dir(path: &Path, display: &str) -> Result<String, String> {
     let mut out = format!("Here're the files and directories in {display}:\n");
-    let entries = walk(root, path, path)?;
+    let entries = walk(path, path)?;
     if entries.is_empty() {
         out.push_str("(empty)\n");
     }
@@ -165,11 +165,7 @@ fn list_dir(root: &Path, path: &Path, display: &str) -> Result<String, String> {
 /// Recursively collect `(line_count, display_path)` for every file under
 /// `dir`, with display paths relative to the listing root. Shared with the
 /// CLI inspection layer.
-pub(crate) fn walk(
-    root: &Path,
-    dir: &Path,
-    display_root: &Path,
-) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn walk(dir: &Path, display_root: &Path) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
         .map_err(|e| format!("Error: cannot read directory {}: {e}", dir.display()))?
@@ -188,7 +184,7 @@ pub(crate) fn walk(
             .map_err(|e| format!("Error: cannot inspect {}: {e}", entry_path.display()))?;
         if meta.is_dir() {
             out.push(("-".to_string(), format!("{relative}/")));
-            out.extend(walk(root, &entry_path, display_root)?);
+            out.extend(walk(&entry_path, display_root)?);
         } else {
             let line_count = std::fs::read_to_string(&entry_path)
                 .map(|content| content.lines().count().to_string())
@@ -208,10 +204,10 @@ fn create(store: &Path, root: &Path, args: &MemoryArgs) -> Result<String, String
             args.path
         ));
     }
-    if let Ok(meta) = std::fs::symlink_metadata(&target.path) {
-        if meta.is_dir() {
-            return Err(format!("Error: {} is a directory", args.path));
-        }
+    if let Ok(meta) = std::fs::symlink_metadata(&target.path)
+        && meta.is_dir()
+    {
+        return Err(format!("Error: {} is a directory", args.path));
     }
     write_new_content(&target, &args.path, file_text)?;
     record_change(store, root, &target, file_text, Command::Create.as_str())?;
@@ -565,6 +561,9 @@ mod tests {
 
     // --- 2.3: symlink containment and root protections ---
 
+    // Symlinks are a Unix feature here: Windows symlinks need privileges and
+    // the containment rule has no Windows equivalent yet (design D8).
+    #[cfg(unix)]
     #[test]
     fn escaping_symlink_is_refused_and_outside_file_untouched() {
         let root = setup("symlink-escape");
@@ -590,6 +589,7 @@ mod tests {
         assert!(outside.join("secret.txt").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_within_root_is_followed() {
         let root = setup("symlink-inside");

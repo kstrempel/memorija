@@ -56,7 +56,7 @@ fn list_output(root: &Path) -> Result<String, String> {
 fn list(root: &Path) -> Result<String, String> {
     let last_seqs = available_versions(root)?;
     let mut out = String::new();
-    for (line_count, relative) in crate::ops::walk(root, root, root)? {
+    for (line_count, relative) in crate::ops::walk(root, root)? {
         if relative.ends_with('/') {
             out.push_str(&format!("{relative}\n"));
         } else {

@@ -17,7 +17,8 @@ back up or edit by hand.
   additive extension of Anthropic's reference schema.
 - **Files as storage** — the memory root is `~/.memorija/memories`, created and
   seeded with a `MEMORY.md` on first launch. An existing root is never
-  overwritten.
+  overwritten. The home directory comes from `$HOME`, or `%USERPROFILE%` on
+  Windows where `HOME` is normally unset.
 - **Versioned edits** — every change to a memory file is recorded, with
   `history`, `view` at a past version, and `restore` to undo any change
   (see [Versioning](#versioning)).
@@ -34,7 +35,39 @@ back up or edit by hand.
 
 ## Install
 
-Requires a current Rust toolchain (edition 2024):
+Prebuilt binaries for macOS, Linux and Windows are attached to every
+[release](https://github.com/kstrempel/memorija/releases). Download the archive
+for your platform, extract it, and put `memorija` on your `PATH`.
+
+| Platform | Archive |
+| --- | --- |
+| macOS, Apple silicon | `memorija-<version>-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `memorija-<version>-x86_64-apple-darwin.tar.gz` |
+| Linux, x86_64 | `memorija-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows, x86_64 | `memorija-<version>-x86_64-pc-windows-msvc.zip` |
+
+```sh
+# macOS / Linux: <version> is the release's version and <target> is from the table
+curl -LO https://github.com/kstrempel/memorija/releases/latest/download/memorija-<version>-<target>.tar.gz
+tar -xzf memorija-<version>-<target>.tar.gz
+sudo mv memorija /usr/local/bin/
+```
+
+```powershell
+# Windows
+Expand-Archive memorija-<version>-x86_64-pc-windows-msvc.zip -DestinationPath .
+```
+
+Every release also publishes `SHA256SUMS`; check a download with
+`sha256sum -c SHA256SUMS --ignore-missing` (Linux) or
+`shasum -a 256 -c SHA256SUMS` (macOS).
+
+The archives are unsigned — no code signing, notarization, or Authenticode. The
+Linux binary needs glibc 2.35 or newer (it is built on Ubuntu 22.04); on macOS,
+if Gatekeeper refuses the binary, clear the download's quarantine flag with
+`xattr -d com.apple.quarantine ./memorija`.
+
+From source, with a current Rust toolchain (edition 2024):
 
 ```sh
 cargo install --path .
@@ -245,6 +278,32 @@ vendor README.
 
 Specs and change history live under [`openspec/`](openspec/). See
 [AGENTS.md](AGENTS.md) for the OpenSpec workflow used in this repository.
+
+### CI and releases
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+`cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+the test suite on Ubuntu, macOS and Windows, and a release build for each
+supported target — `x86_64-unknown-linux-gnu` (on `ubuntu-22.04`, for the glibc
+floor), `aarch64-apple-darwin`, `x86_64-apple-darwin` (cross-built on the arm64
+runner), and `x86_64-pc-windows-msvc`. Tests that need Unix symlinks are
+`#[cfg(unix)]`, so the Windows run compiles and runs everything else. The memory
+root is found through `$HOME`, falling back to `%USERPROFILE%` on Windows.
+
+To release, bump the version in `Cargo.toml`, commit, and push a tag with that
+version:
+
+```sh
+git tag v0.9.0
+git push origin v0.9.0
+```
+
+`.github/workflows/release.yml` refuses a tag that disagrees with the crate
+version. Otherwise it builds one archive per target with the binary, `README.md`
+and `LICENSE` at the top level, writes `SHA256SUMS`, smoke-tests the Linux
+binary, and attaches everything to the GitHub Release for that tag. Re-running a
+failed release is safe: `gh workflow run release.yml -f tag=v0.9.0` creates the
+release if it is missing and uploads with `--clobber`.
 
 ## License
 
